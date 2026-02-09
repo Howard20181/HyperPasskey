@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">修復澎湃系統通行密鑰</string>
+    <string name="xposed_description">要修復通行密鑰，你必須啟用谷歌基礎服務</string>
+</resources>

@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <application
+        android:description="@string/xposed_description"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        tools:ignore="AllowBackup,MissingApplicationIcon" />
+
+    <overlay
+        android:isStatic="true"
+        android:requiredSystemPropertyName="ro.miui.ui.version.code"
+        android:requiredSystemPropertyValue="816"
+        android:targetPackage="io.github.howard20181.hyperpasskey" />
+    <overlay
+        android:isStatic="true"
+        android:requiredSystemPropertyName="ro.miui.build.region"
+        android:requiredSystemPropertyValue="cn"
+        android:targetPackage="io.github.howard20181.hyperpasskey" />
+    <overlay
+        android:isStatic="true"
+        android:requiredSystemPropertyName="ro.miui.has_gmscore"
+        android:requiredSystemPropertyValue="1"
+        android:targetPackage="io.github.howard20181.hyperpasskey" />
+</manifest>

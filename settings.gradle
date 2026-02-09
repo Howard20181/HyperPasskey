@@ -1,0 +1,28 @@
+pluginManagement {
+    repositories {
+        gradlePluginPortal()
+        google()
+        mavenCentral()
+    }
+}
+plugins {
+    id 'org.gradle.toolchains.foojay-resolver-convention' version '1.0.0'
+}
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenLocal {
+            content {
+                includeGroup("io.github.libxposed")
+            }
+        }
+        mavenCentral()
+    }
+}
+rootProject.name = "HyperPasskey"
+include ':HyperPasskey'
+include ':libxposed-compat'
+include ':hiddenapi'
+include ':hiddenapi:stubs'
+include ':hiddenapi:bridge'

@@ -1,0 +1,57 @@
+name: Android CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Checkout libxposed/api
+        uses: actions/checkout@v6
+        with:
+          repository: libxposed/api
+          path: libxposed/api
+          fetch-depth: 0
+
+      - name: set up JDK
+        uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Write key
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: |
+          if [ ! -z "${{ secrets.SIGNING_KEY }}" ]; then
+          echo storePassword='${{ secrets.KEY_STORE_PASSWORD }}' >> local.properties
+          echo keyAlias='${{ secrets.ALIAS }}' >> local.properties
+          echo keyPassword='${{ secrets.KEY_PASSWORD }}' >> local.properties
+          echo storeFile='key.jks' >> local.properties
+          echo ${{ secrets.SIGNING_KEY }} | base64 --decode > key.jks
+          fi
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: Build dependency
+        working-directory: libxposed/api
+        run: |
+          ./gradlew publishToMavenLocal
+
+      - name: Build with Gradle
+        run: |
+          ./gradlew assemble
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: Signed app bundle
+          path: HyperPasskey/build/outputs/apk

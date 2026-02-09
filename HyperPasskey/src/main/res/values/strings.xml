@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Fix HyperOS Passkey</string>
+    <string name="xposed_description">To fix HyperOS passkey, you must enable Basic Google services</string>
+</resources>

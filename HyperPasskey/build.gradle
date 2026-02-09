@@ -1,0 +1,120 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    compileSdkVersion 36
+
+    defaultConfig {
+        applicationId namespace
+        minSdkVersion 35
+        targetSdkVersion 36
+        versionCode rootProject.ext.commitCount
+        versionName "1.0.0"
+        ndk {
+            //noinspection ChromeOsAbiSupport
+            abiFilters 'arm64-v8a'
+        }
+    }
+
+    Properties localProperties = new Properties()
+    if (project.rootProject.file('local.properties').exists()) {
+        localProperties.load(project.rootProject.file('local.properties').newDataInputStream())
+    }
+
+    signingConfigs {
+        if (localProperties.getProperty("storeFile") != null) {
+            config {
+                storeFile project.rootProject.file(localProperties.getProperty("storeFile"))
+                storePassword localProperties.getProperty("storePassword")
+                keyAlias localProperties.getProperty("keyAlias")
+                keyPassword localProperties.getProperty("keyPassword")
+            }
+        }
+    }
+
+    buildTypes {
+        configureEach {
+            vcsInfo.include false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+        debug {
+            if (localProperties.getProperty("storeFile") != null) {
+                signingConfig signingConfigs.config
+            }
+        }
+        release {
+            if (localProperties.getProperty("storeFile") != null) {
+                signingConfig signingConfigs.config
+            } else {
+                signingConfig signingConfigs.debug
+            }
+            minifyEnabled true
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint {
+        checkReleaseBuilds false
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+    packagingOptions {
+        jniLibs {
+            excludes += ['kotlin/**', 'META-INF/androidx/**']
+        }
+        resources {
+            excludes += ['kotlin/**', 'META-INF/androidx/**']
+        }
+    }
+
+
+    dependenciesInfo.includeInApk false
+    enableKotlin = false
+    namespace 'io.github.howard20181.hyperpasskey'
+}
+base {
+    archivesName = project.name + "-" + android.defaultConfig.versionName + "." + android.defaultConfig.versionCode
+}
+dependencies {
+    implementation "androidx.annotation:annotation:1.9.1"
+    compileOnly 'io.github.libxposed:api:100'
+    implementation 'org.luckypray:dexkit:2.0.7'
+    compileOnly project(":libxposed-compat")
+    compileOnly project(":hiddenapi:stubs")
+    implementation project(":hiddenapi:bridge")
+}
+
+tasks.register('applyXposedDebug', Exec) {
+    group "xposed"
+    dependsOn "installDebug"
+    commandLine "adb", "shell", "svc", "power", "reboot"
+    ignoreExitValue = true
+}
+
+tasks.register('applyXposedRelease', Exec) {
+    group "xposed"
+    dependsOn "installRelease"
+    commandLine "adb", "shell", "svc", "power", "reboot"
+    ignoreExitValue = true
+}
+
+tasks.register('applyXposedSecurityCenterDebug', Exec) {
+    group "xposed"
+    dependsOn "installDebug"
+    commandLine "adb", "shell", "am", "force-stop", "com.miui.securitycenter"
+    ignoreExitValue = true
+}
+
+tasks.register('applyXposedSecurityCenterRelease', Exec) {
+    group "xposed"
+    dependsOn "installRelease"
+    commandLine "adb", "shell", "am", "force-stop", "com.miui.securitycenter"
+    ignoreExitValue = true
+}
