@@ -69,26 +69,30 @@ public class PasskeyHook extends XposedModule {
         } catch (Exception e) {
             log("find IS_INTERNATIONAL_BUILD failed", e);
         }
-        if (pn.equals(settingsPackageName)) {
-            try {
-                hookDefaultCombinedPicker(classLoader);
-            } catch (Exception e) {
-                log("hook DefaultCombinedPicker failed", e);
+        switch (pn) {
+            case settingsPackageName -> {
+                try {
+                    hookDefaultCombinedPicker(classLoader);
+                } catch (Exception e) {
+                    log("hook DefaultCombinedPicker failed", e);
+                }
+                try {
+                    hookDefaultCombinedPreferenceController(classLoader);
+                } catch (Exception e) {
+                    log("hook DefaultCombinedPreferenceController failed", e);
+                }
             }
-            try {
-                hookDefaultCombinedPreferenceController(classLoader);
-            } catch (Exception e) {
-                log("hook DefaultCombinedPreferenceController failed", e);
+            case securityCenterPackageName -> {
+                try (var bridge = DexKitBridge.create(classLoader, true)) {
+                    securityCenterApplicationHook(classLoader, bridge);
+                }
             }
-        } else if (pn.equals(securityCenterPackageName)) {
-            try (var bridge = DexKitBridge.create(classLoader, true)) {
-                securityCenterApplicationHook(classLoader, bridge);
-            }
-        } else if (pn.equals(xiaomiScannerPackageName)) {
-            try {
-                hookMiFiDoBean(classLoader);
-            } catch (ClassNotFoundException e) {
-                log("hook MiFiDoBean failed", e);
+            case xiaomiScannerPackageName -> {
+                try {
+                    hookMiFiDoBean(classLoader);
+                } catch (ClassNotFoundException e) {
+                    log("hook MiFiDoBean failed", e);
+                }
             }
         }
     }
