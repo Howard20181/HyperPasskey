@@ -28,6 +28,7 @@ import io.github.libxposed.api.annotations.XposedHooker;
 public class PasskeyHook extends XposedModule {
     private static final String settingsPackageName = "com.android.settings";
     private static final String securityCenterPackageName = "com.miui.securitycenter";
+    private static final String xiaomiScannerPackageName = "com.xiaomi.scanner";
     private static XposedModule module;
     private static Field fIsInternationalBuildBoolean;
     private static boolean originalIsInternationalBuild;
@@ -82,6 +83,23 @@ public class PasskeyHook extends XposedModule {
         } else if (pn.equals(securityCenterPackageName)) {
             try (var bridge = DexKitBridge.create(classLoader, true)) {
                 securityCenterApplicationHook(classLoader, bridge);
+            }
+        } else if (pn.equals(xiaomiScannerPackageName)) {
+            try {
+                hookMiFiDoBean(classLoader);
+            } catch (ClassNotFoundException e) {
+                log("hook MiFiDoBean failed", e);
+            }
+        }
+    }
+
+    private void hookMiFiDoBean(ClassLoader classLoader) throws ClassNotFoundException {
+        var iClass = classLoader.loadClass("com.xiaomi.scanner.module.code.utils.bean.MiFiDoBean");
+        if (iClass != null) {
+            try {
+                var aMethod = iClass.getDeclaredMethod("getAppPackageName");
+                hook(aMethod, GetAppPackageNameHooker.class);
+            } catch (NoSuchMethodException ignored) {
             }
         }
     }
@@ -166,6 +184,14 @@ public class PasskeyHook extends XposedModule {
             } catch (NoSuchMethodException e) {
                 module.log("hook setDefaultConfigForAutofillAndCredentialManager", e);
             }
+        }
+    }
+
+    @XposedHooker
+    private static class GetAppPackageNameHooker implements Hooker {
+        @BeforeInvocation
+        public static void before(@NonNull BeforeHookCallback callback) {
+            callback.returnAndSkip("");
         }
     }
 
