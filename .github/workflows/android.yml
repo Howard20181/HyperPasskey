@@ -21,6 +21,14 @@ jobs:
           path: libxposed/api
           fetch-depth: 0
 
+      - name: Checkout libxposed/helper
+        uses: actions/checkout@v6
+        with:
+          repository: Howard20181/helper
+          path: libxposed/helper
+          fetch-depth: 0
+          ref: impl
+
       - name: set up JDK
         uses: actions/setup-java@v5
         with:
@@ -41,8 +49,13 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v5
 
-      - name: Build dependency
+      - name: Build libxposed-api
         working-directory: libxposed/api
+        run: |
+          ./gradlew publishToMavenLocal
+
+      - name: Build libxposed-helper
+        working-directory: libxposed/helper
         run: |
           ./gradlew publishToMavenLocal
 

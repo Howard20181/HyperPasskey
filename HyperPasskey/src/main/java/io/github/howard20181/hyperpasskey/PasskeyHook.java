@@ -17,15 +17,22 @@ import org.luckypray.dexkit.DexKitBridge;
 import org.luckypray.dexkit.query.FindMethod;
 import org.luckypray.dexkit.query.matchers.MethodMatcher;
 
+import java.io.EOFException;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.Set;
 
+import dalvik.system.BaseDexClassLoader;
 import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedModule;
 import io.github.libxposed.api.annotations.AfterInvocation;
 import io.github.libxposed.api.annotations.BeforeInvocation;
 import io.github.libxposed.api.annotations.XposedHooker;
+import io.github.libxposed.helper.HookBuilder;
 
 @SuppressLint({"PrivateApi", "BlockedPrivateApi", "SoonBlockedPrivateApi"})
 public class PasskeyHook extends XposedModule {
@@ -33,6 +40,7 @@ public class PasskeyHook extends XposedModule {
     private static final String securityCenterPackageName = "com.miui.securitycenter";
     private static final String xiaomiScannerPackageName = "com.xiaomi.scanner";
     private static XposedModule module;
+    private static XposedInterface ctx;
     Class<?> cRequestSession;
     private static Field fIsInternationalBuildBoolean;
     private static Field fHybridService;
@@ -45,6 +53,7 @@ public class PasskeyHook extends XposedModule {
     public PasskeyHook(XposedInterface base, ModuleLoadedParam param) {
         super(base, param);
         module = this;
+        ctx = base;
     }
 
     @Override
@@ -74,6 +83,8 @@ public class PasskeyHook extends XposedModule {
         if (!param.isFirstPackage()) return;
         var classLoader = param.getClassLoader();
         var pn = param.getPackageName();
+        var cacheDir = new File(param.getApplicationInfo().dataDir, "cache/libxposed");
+        var cacheFile = new File(cacheDir, "parseDex.bin");
         try {
             var buildClass = classLoader.loadClass("miui.os.Build");
             fIsInternationalBuildBoolean = buildClass.getDeclaredField("IS_INTERNATIONAL_BUILD");
@@ -96,6 +107,45 @@ public class PasskeyHook extends XposedModule {
                 }
             }
             case securityCenterPackageName -> {
+                try {
+                    var appInfo = param.getApplicationInfo();
+                    HookBuilder.buildHooks(ctx,
+                            new BaseDexClassLoader(appInfo.sourceDir, null, appInfo.nativeLibraryDir, classLoader),
+                            appInfo.sourceDir, builder -> {
+                                cacheDir.mkdirs();
+                                try {
+                                    if (!cacheFile.exists()) {
+                                        cacheFile.createNewFile();
+                                    } else if (!cacheFile.canWrite()) {
+                                        cacheFile.delete();
+                                        cacheFile.createNewFile();
+                                    }
+//                                    builder.setCacheInputStream(new FileInputStream(cacheFile));
+                                } catch (IOException e) {
+                                    log("hook SecurityCenter cache read", e);
+                                }
+                                try {
+                                    builder.setCacheOutputStream(new FileOutputStream(cacheFile));
+                                } catch (IOException e) {
+                                    log("hook SecurityCenter cache write", e);
+                                }
+                                builder.setExceptionHandler(e -> {
+                                    log("SecurityCenter HookBuilder", e);
+                                    return true;
+                                });
+                                var cApplication = builder.exactClass("Lcom/miui/securitycenter/Application;")
+                                        .onMatch(c -> log("hook SecurityCenter found class: " + c.getName()));
+                                var getString = builder.exactMethod("Landroid/content/res/Resources;->getString(I)Ljava/lang/String;");
+                                var putString = builder.exactMethod("Landroid/provider/Settings$Secure;->putString(Landroid/content/ContentResolver;Ljava/lang/String;Ljava/lang/String;)Z")
+                                        .onMatch(method -> log("hook SecurityCenter found method: " + method.getName()));
+//                                cApplication.findFirstMethod(methodMatcher -> methodMatcher
+//                                        .setParameters(methodMatcher.conjunction(Context.class, String.class, int.class))
+//                                        .setInvokedMethods(getString.observe().and(putString.observe()))
+//                                ).onMatch(method -> log("hook SecurityCenter found method: " + method.getName()));
+                            });
+                } catch (Exception e) {
+                    log("hook SecurityCenter uncatch", e);
+                }
                 try (var bridge = DexKitBridge.create(classLoader, true)) {
                     securityCenterApplicationHook(classLoader, bridge);
                 }
