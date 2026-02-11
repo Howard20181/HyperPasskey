@@ -10,7 +10,7 @@ android {
         minSdkVersion 35
         targetSdkVersion 36
         versionCode rootProject.ext.commitCount
-        versionName "1.1.0"
+        versionName "1.2.0"
         ndk {
             //noinspection ChromeOsAbiSupport
             abiFilters 'arm64-v8a'

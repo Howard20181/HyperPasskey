@@ -8,6 +8,8 @@ import android.content.pm.PackageManager;
 import android.credentials.CredentialManager;
 import android.os.Build;
 import android.credentials.selection.IntentCreationResult;
+import android.os.CancellationSignal;
+import android.service.credentials.CallingAppInfo;
 
 import androidx.annotation.NonNull;
 
@@ -17,6 +19,7 @@ import org.luckypray.dexkit.query.matchers.MethodMatcher;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.Set;
 
 import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedModule;
@@ -30,7 +33,9 @@ public class PasskeyHook extends XposedModule {
     private static final String securityCenterPackageName = "com.miui.securitycenter";
     private static final String xiaomiScannerPackageName = "com.xiaomi.scanner";
     private static XposedModule module;
+    Class<?> cRequestSession;
     private static Field fIsInternationalBuildBoolean;
+    private static Field fHybridService;
     private static boolean originalIsInternationalBuild;
 
     static {
@@ -50,6 +55,14 @@ public class PasskeyHook extends XposedModule {
                 hookIntentFactory(classLoader);
             } catch (Exception e) {
                 log("hook IntentFactory failed", e);
+            }
+            try {
+                cRequestSession = classLoader.loadClass("com.android.server.credentials.RequestSession");
+                fHybridService = cRequestSession.getDeclaredField("mHybridService");
+                fHybridService.setAccessible(true);
+                hookRequestSession(classLoader);
+            } catch (Exception e) {
+                log("hook RequestSession failed", e);
             }
         } catch (Throwable tr) {
             log("Error hooking system service", tr);
@@ -130,6 +143,14 @@ public class PasskeyHook extends XposedModule {
         }
     }
 
+    private void hookRequestSession(ClassLoader classLoader) throws NoSuchMethodException, ClassNotFoundException {
+        var aClass = classLoader.loadClass("com.android.server.credentials.RequestSession$SessionLifetime");
+        var constructorRequestSession = cRequestSession.getDeclaredConstructor(Context.class, aClass,
+                Object.class, int.class, int.class, Object.class, Object.class, String.class,
+                CallingAppInfo.class, Set.class, CancellationSignal.class, long.class, boolean.class);
+        hook(constructorRequestSession, RequestSessionHooker.class);
+    }
+
     private void hookIntentFactory(ClassLoader classLoader) throws NoSuchMethodException, ClassNotFoundException {
         var iClass = classLoader.loadClass("android.credentials.selection.IntentFactory");
         var aClass = classLoader.loadClass("android.credentials.selection.IntentCreationResult$Builder");
@@ -208,13 +229,22 @@ public class PasskeyHook extends XposedModule {
     }
 
     @XposedHooker
+    private static class RequestSessionHooker implements Hooker {
+        @AfterInvocation
+        public static void after(@NonNull AfterHookCallback callback) throws IllegalAccessException {
+            if (fHybridService != null) {
+                fHybridService.set(callback.getThisObject(), "com.google.android.gms/.auth.api.credentials.credman.service.RemoteService");
+            }
+        }
+    }
+
+    @XposedHooker
     private static class GetOemOverrideComponentNameHooker implements Hooker {
         @BeforeInvocation
         public static void before(@NonNull BeforeHookCallback callback) {
             var args = callback.getArgs();
             var context = (Context) args[0];
             var intentResultBuilder = (IntentCreationResult.Builder) args[1];
-            ComponentName result = null;
             String oemComponentString = "com.google.android.gms/.identitycredentials.ui.CredentialChooserActivity";
             ComponentName oemComponentName = null;
             try {
@@ -237,11 +267,9 @@ public class PasskeyHook extends XposedModule {
                     }
                     if (oemComponentEnabled && info.exported) {
                         intentResultBuilder.setOemUiUsageStatus(IntentCreationResult.OemUiUsageStatus.SUCCESS);
-                        module.log("Found enabled oem CredMan UI component." + oemComponentString);
-                        result = oemComponentName;
+                        callback.returnAndSkip(oemComponentName);
                     } else {
                         intentResultBuilder.setOemUiUsageStatus(IntentCreationResult.OemUiUsageStatus.OEM_UI_CONFIG_SPECIFIED_FOUND_BUT_NOT_ENABLED);
-                        module.log("Found enabled oem CredMan UI component but it was not " + "enabled.");
                     }
                 } catch (PackageManager.NameNotFoundException e) {
                     intentResultBuilder.setOemUiUsageStatus(IntentCreationResult.OemUiUsageStatus.OEM_UI_CONFIG_SPECIFIED_BUT_NOT_FOUND);
@@ -251,7 +279,6 @@ public class PasskeyHook extends XposedModule {
                 intentResultBuilder.setOemUiUsageStatus(IntentCreationResult.OemUiUsageStatus.OEM_UI_CONFIG_SPECIFIED_BUT_NOT_FOUND);
                 module.log("Invalid OEM ComponentName format.");
             }
-            callback.returnAndSkip(result);
         }
     }
 
