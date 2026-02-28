@@ -3,6 +3,9 @@ package android.credentials.selection;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 
+import androidx.annotation.RequiresApi;
+
+@RequiresApi(35)
 public class IntentCreationResult {
     public enum OemUiUsageStatus {
         UNKNOWN,

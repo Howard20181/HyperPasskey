@@ -7,10 +7,10 @@ android {
 
     defaultConfig {
         applicationId namespace
-        minSdkVersion 35
+        minSdkVersion 34
         targetSdkVersion 36
         versionCode rootProject.ext.commitCount
-        versionName "1.2.0"
+        versionName "1.3.0"
         ndk {
             //noinspection ChromeOsAbiSupport
             abiFilters 'arm64-v8a'

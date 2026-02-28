@@ -9,6 +9,8 @@ import android.credentials.CredentialManager;
 import android.os.Build;
 import android.credentials.selection.IntentCreationResult;
 import android.os.CancellationSignal;
+import android.os.IBinder;
+import android.os.ResultReceiver;
 import android.service.credentials.CallingAppInfo;
 
 import androidx.annotation.NonNull;
@@ -17,8 +19,10 @@ import org.luckypray.dexkit.DexKitBridge;
 import org.luckypray.dexkit.query.FindMethod;
 import org.luckypray.dexkit.query.matchers.MethodMatcher;
 
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.ArrayList;
 import java.util.Set;
 
 import io.github.libxposed.api.XposedInterface;
@@ -94,6 +98,13 @@ public class PasskeyHook extends XposedModule {
                 } catch (Exception e) {
                     log("hook DefaultCombinedPreferenceController failed", e);
                 }
+                if (Build.VERSION.SDK_INT == Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+                    try {
+                        hookDefaultAppPreferenceController(classLoader);
+                    } catch (Exception e) {
+                        log("hook DefaultAppPreferenceController failed", e);
+                    }
+                }
             }
             case securityCenterPackageName -> {
                 try (var bridge = DexKitBridge.create(classLoader, true)) {
@@ -132,6 +143,18 @@ public class PasskeyHook extends XposedModule {
         }
     }
 
+    private void hookDefaultAppPreferenceController(ClassLoader classLoader) throws ClassNotFoundException {
+        var iClass = classLoader.loadClass("com.android.settings.applications.defaultapps.DefaultAppPreferenceController");
+        var PreferenceClass = classLoader.loadClass("androidx.preference.Preference");
+        if (iClass != null) {
+            try {
+                var aMethod = iClass.getDeclaredMethod("updateState", PreferenceClass);
+                hook(aMethod, IsInternationalBuildHooker.class);
+            } catch (NoSuchMethodException ignored) {
+            }
+        }
+    }
+
     private void hookDefaultCombinedPicker(ClassLoader classLoader) throws ClassNotFoundException {
         var iClass = classLoader.loadClass("com.android.settings.applications.credentials.DefaultCombinedPicker");
         if (iClass != null) {
@@ -145,22 +168,39 @@ public class PasskeyHook extends XposedModule {
 
     private void hookRequestSession(ClassLoader classLoader) throws NoSuchMethodException, ClassNotFoundException {
         var aClass = classLoader.loadClass("com.android.server.credentials.RequestSession$SessionLifetime");
-        var constructorRequestSession = cRequestSession.getDeclaredConstructor(Context.class, aClass,
-                Object.class, int.class, int.class, Object.class, Object.class, String.class,
-                CallingAppInfo.class, Set.class, CancellationSignal.class, long.class, boolean.class);
+        Constructor<?> constructorRequestSession;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+            constructorRequestSession = cRequestSession.getDeclaredConstructor(Context.class, aClass,
+                    Object.class, int.class, int.class, Object.class, Object.class, String.class,
+                    CallingAppInfo.class, Set.class, CancellationSignal.class, long.class, boolean.class);
+        } else {
+            constructorRequestSession = cRequestSession.getDeclaredConstructor(Context.class, aClass,
+                    Object.class, int.class, int.class, Object.class, Object.class, String.class,
+                    CallingAppInfo.class, Set.class, CancellationSignal.class, long.class);
+        }
         hook(constructorRequestSession, RequestSessionHooker.class);
     }
 
     private void hookIntentFactory(ClassLoader classLoader) throws NoSuchMethodException, ClassNotFoundException {
-        var iClass = classLoader.loadClass("android.credentials.selection.IntentFactory");
-        var aClass = classLoader.loadClass("android.credentials.selection.IntentCreationResult$Builder");
-        Method mGetOemOverrideComponentName;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA) {
-            mGetOemOverrideComponentName = iClass.getDeclaredMethod("getOemOverrideComponentName", Context.class, aClass, int.class);
+        Class<?> classIntentFactory;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+            Method mGetOemOverrideComponentName;
+            classIntentFactory = classLoader.loadClass("android.credentials.selection.IntentFactory");
+            var classIntentCreationResultBuilder = classLoader.loadClass("android.credentials.selection.IntentCreationResult$Builder");
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA) {
+                mGetOemOverrideComponentName = classIntentFactory.getDeclaredMethod("getOemOverrideComponentName", Context.class, classIntentCreationResultBuilder, int.class);
+            } else {
+                mGetOemOverrideComponentName = classIntentFactory.getDeclaredMethod("getOemOverrideComponentName", Context.class, classIntentCreationResultBuilder);
+            }
+            hook(mGetOemOverrideComponentName, GetOemOverrideComponentNameHooker.class);
         } else {
-            mGetOemOverrideComponentName = iClass.getDeclaredMethod("getOemOverrideComponentName", Context.class, aClass);
+            classIntentFactory = classLoader.loadClass("android.credentials.ui.IntentFactory");
+            var classRequestInfo = classLoader.loadClass("android.credentials.ui.RequestInfo");
+            var mCreateCredentialSelectorIntent = classIntentFactory.getDeclaredMethod("createCredentialSelectorIntent", classRequestInfo, ArrayList.class, ArrayList.class, ResultReceiver.class);
+            var mCreateCancelUiIntent = classIntentFactory.getDeclaredMethod("createCancelUiIntent", IBinder.class, boolean.class, String.class);
+            hook(mCreateCredentialSelectorIntent, GetOemOverrideComponentNameHooker.class);
+            hook(mCreateCancelUiIntent, GetOemOverrideComponentNameHooker.class);
         }
-        hook(mGetOemOverrideComponentName, GetOemOverrideComponentNameHooker.class);
     }
 
 
@@ -238,46 +278,52 @@ public class PasskeyHook extends XposedModule {
         }
     }
 
+    private static ComponentName getOemComponentName() {
+        ComponentName oemComponentName = null;
+        try {
+            oemComponentName = ComponentName.unflattenFromString(GetOemOverrideComponentNameHooker.oemComponentString);
+        } catch (Exception e) {
+            module.log("Failed to parse OEM component name " + GetOemOverrideComponentNameHooker.oemComponentString + ": " + e);
+        }
+        return oemComponentName;
+    }
+
     @XposedHooker
     private static class GetOemOverrideComponentNameHooker implements Hooker {
+        private static final String oemComponentString = "com.google.android.gms/.identitycredentials.ui.CredentialChooserActivity";
+
         @BeforeInvocation
         public static void before(@NonNull BeforeHookCallback callback) {
             var args = callback.getArgs();
-            var context = (Context) args[0];
-            var intentResultBuilder = (IntentCreationResult.Builder) args[1];
-            String oemComponentString = "com.google.android.gms/.identitycredentials.ui.CredentialChooserActivity";
-            ComponentName oemComponentName = null;
-            try {
-                oemComponentName = ComponentName.unflattenFromString(oemComponentString);
-            } catch (Exception e) {
-                module.log("Failed to parse OEM component name " + oemComponentString + ": " + e);
-            }
-            if (oemComponentName != null) {
-                try {
-                    intentResultBuilder.setOemUiPackageName(oemComponentName.getPackageName());
-                    ActivityInfo info = context.getPackageManager().getActivityInfo(
-                            oemComponentName,
-                            PackageManager.ComponentInfoFlags.of(PackageManager.MATCH_SYSTEM_ONLY));
-                    boolean oemComponentEnabled = info.enabled;
-                    int runtimeComponentEnabledState = context.getPackageManager().getComponentEnabledSetting(oemComponentName);
-                    if (runtimeComponentEnabledState == PackageManager.COMPONENT_ENABLED_STATE_ENABLED) {
-                        oemComponentEnabled = true;
-                    } else if (runtimeComponentEnabledState == PackageManager.COMPONENT_ENABLED_STATE_DISABLED) {
-                        oemComponentEnabled = false;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM && args.length >= 2 && args[0] instanceof Context context && args[1] instanceof IntentCreationResult.Builder intentResultBuilder) {
+                ComponentName oemComponentName = getOemComponentName();
+                if (oemComponentName != null) {
+                    try {
+                        intentResultBuilder.setOemUiPackageName(oemComponentName.getPackageName());
+                        ActivityInfo info = context.getPackageManager().getActivityInfo(
+                                oemComponentName,
+                                PackageManager.ComponentInfoFlags.of(PackageManager.MATCH_SYSTEM_ONLY));
+                        boolean oemComponentEnabled = info.enabled;
+                        int runtimeComponentEnabledState = context.getPackageManager().getComponentEnabledSetting(oemComponentName);
+                        if (runtimeComponentEnabledState == PackageManager.COMPONENT_ENABLED_STATE_ENABLED) {
+                            oemComponentEnabled = true;
+                        } else if (runtimeComponentEnabledState == PackageManager.COMPONENT_ENABLED_STATE_DISABLED) {
+                            oemComponentEnabled = false;
+                        }
+                        if (oemComponentEnabled && info.exported) {
+                            intentResultBuilder.setOemUiUsageStatus(IntentCreationResult.OemUiUsageStatus.SUCCESS);
+                            callback.returnAndSkip(oemComponentName);
+                        } else {
+                            intentResultBuilder.setOemUiUsageStatus(IntentCreationResult.OemUiUsageStatus.OEM_UI_CONFIG_SPECIFIED_FOUND_BUT_NOT_ENABLED);
+                        }
+                    } catch (PackageManager.NameNotFoundException e) {
+                        intentResultBuilder.setOemUiUsageStatus(IntentCreationResult.OemUiUsageStatus.OEM_UI_CONFIG_SPECIFIED_BUT_NOT_FOUND);
+                        module.log("Unable to find oem CredMan UI component: " + oemComponentString + ".");
                     }
-                    if (oemComponentEnabled && info.exported) {
-                        intentResultBuilder.setOemUiUsageStatus(IntentCreationResult.OemUiUsageStatus.SUCCESS);
-                        callback.returnAndSkip(oemComponentName);
-                    } else {
-                        intentResultBuilder.setOemUiUsageStatus(IntentCreationResult.OemUiUsageStatus.OEM_UI_CONFIG_SPECIFIED_FOUND_BUT_NOT_ENABLED);
-                    }
-                } catch (PackageManager.NameNotFoundException e) {
+                } else {
                     intentResultBuilder.setOemUiUsageStatus(IntentCreationResult.OemUiUsageStatus.OEM_UI_CONFIG_SPECIFIED_BUT_NOT_FOUND);
-                    module.log("Unable to find oem CredMan UI component: " + oemComponentString + ".");
+                    module.log("Invalid OEM ComponentName format.");
                 }
-            } else {
-                intentResultBuilder.setOemUiUsageStatus(IntentCreationResult.OemUiUsageStatus.OEM_UI_CONFIG_SPECIFIED_BUT_NOT_FOUND);
-                module.log("Invalid OEM ComponentName format.");
             }
         }
     }
