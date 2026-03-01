@@ -16,8 +16,11 @@ import android.service.credentials.CallingAppInfo;
 import androidx.annotation.NonNull;
 
 import org.luckypray.dexkit.DexKitBridge;
+import org.luckypray.dexkit.query.FindClass;
 import org.luckypray.dexkit.query.FindMethod;
+import org.luckypray.dexkit.query.matchers.ClassMatcher;
 import org.luckypray.dexkit.query.matchers.MethodMatcher;
+import org.luckypray.dexkit.query.matchers.MethodsMatcher;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
@@ -86,36 +89,45 @@ public class PasskeyHook extends XposedModule {
         } catch (Exception e) {
             log("find IS_INTERNATIONAL_BUILD failed", e);
         }
-        switch (pn) {
-            case settingsPackageName -> {
-                try {
-                    hookDefaultCombinedPicker(classLoader);
-                } catch (Exception e) {
-                    log("hook DefaultCombinedPicker failed", e);
-                }
-                try {
-                    hookDefaultCombinedPreferenceController(classLoader);
-                } catch (Exception e) {
-                    log("hook DefaultCombinedPreferenceController failed", e);
-                }
-                if (Build.VERSION.SDK_INT == Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+        try (var bridge = DexKitBridge.create(classLoader, true)) {
+            switch (pn) {
+                case settingsPackageName -> {
                     try {
-                        hookDefaultAppPreferenceController(classLoader);
+                        hookDefaultCombinedPicker(classLoader);
                     } catch (Exception e) {
-                        log("hook DefaultAppPreferenceController failed", e);
+                        log("hook DefaultCombinedPicker failed", e);
+                    }
+                    try {
+                        hookDefaultCombinedPreferenceController(classLoader);
+                    } catch (Exception e) {
+                        log("hook DefaultCombinedPreferenceController failed", e);
+                    }
+                    try {
+                        hookOnCombiPreferenceClickListener(classLoader, bridge);
+                    } catch (Exception e) {
+                        log("hook OnCombiPreferenceClickListener failed", e);
+                    }
+                    if (Build.VERSION.SDK_INT == Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                        try {
+                            hookDefaultAppPreferenceController(classLoader);
+                        } catch (Exception e) {
+                            log("hook DefaultAppPreferenceController failed", e);
+                        }
                     }
                 }
-            }
-            case securityCenterPackageName -> {
-                try (var bridge = DexKitBridge.create(classLoader, true)) {
-                    securityCenterApplicationHook(classLoader, bridge);
+                case securityCenterPackageName -> {
+                    try {
+                        securityCenterApplicationHook(classLoader, bridge);
+                    } catch (Exception e) {
+                        log("hook SecurityCenterApplication failed", e);
+                    }
                 }
-            }
-            case xiaomiScannerPackageName -> {
-                try {
-                    hookMiFiDoBean(classLoader);
-                } catch (ClassNotFoundException e) {
-                    log("hook MiFiDoBean failed", e);
+                case xiaomiScannerPackageName -> {
+                    try {
+                        hookMiFiDoBean(classLoader);
+                    } catch (ClassNotFoundException e) {
+                        log("hook MiFiDoBean failed", e);
+                    }
                 }
             }
         }
@@ -159,6 +171,24 @@ public class PasskeyHook extends XposedModule {
             } catch (NoSuchMethodException ignored) {
             }
         }
+    }
+
+    private void hookOnCombiPreferenceClickListener(ClassLoader classLoader, DexKitBridge bridge) {
+        var onLeftSideClickedMatcher = MethodMatcher.create()
+                .name("onLeftSideClicked")
+                .paramCount(0)
+                .addInvoke("Lcom/android/settings/applications/credentials/CombinedProviderInfo;->launchSettingsActivityIntent(Landroid/content/Context;Ljava/lang/CharSequence;Ljava/lang/CharSequence;I)V");
+        bridge.findClass(FindClass.create()
+                .searchPackages("com.android.settings.applications.credentials")
+                .matcher(ClassMatcher.create().methods(MethodsMatcher.create().add(onLeftSideClickedMatcher)))
+        ).findMethod(FindMethod.create().matcher(onLeftSideClickedMatcher)
+        ).forEach(methodData -> {
+            try {
+                hook(methodData.getMethodInstance(classLoader), IsInternationalBuildHooker.class);
+            } catch (NoSuchMethodException e) {
+                log("hook onLeftSideClicked failed", e);
+            }
+        });
     }
 
     private void hookRequestSession(ClassLoader classLoader) throws NoSuchMethodException, ClassNotFoundException {
