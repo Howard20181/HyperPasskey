@@ -98,7 +98,7 @@ public class PasskeyHook extends XposedModule {
                 } catch (Exception e) {
                     log("hook DefaultCombinedPreferenceController failed", e);
                 }
-                if (Build.VERSION.SDK_INT == Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+                if (Build.VERSION.SDK_INT == Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                     try {
                         hookDefaultAppPreferenceController(classLoader);
                     } catch (Exception e) {
@@ -143,16 +143,11 @@ public class PasskeyHook extends XposedModule {
         }
     }
 
-    private void hookDefaultAppPreferenceController(ClassLoader classLoader) throws ClassNotFoundException {
+    private void hookDefaultAppPreferenceController(ClassLoader classLoader) throws ClassNotFoundException, NoSuchMethodException {
         var iClass = classLoader.loadClass("com.android.settings.applications.defaultapps.DefaultAppPreferenceController");
         var PreferenceClass = classLoader.loadClass("androidx.preference.Preference");
-        if (iClass != null) {
-            try {
-                var aMethod = iClass.getDeclaredMethod("updateState", PreferenceClass);
-                hook(aMethod, IsInternationalBuildHooker.class);
-            } catch (NoSuchMethodException ignored) {
-            }
-        }
+        var aMethod = iClass.getDeclaredMethod("updateState", PreferenceClass);
+        hook(aMethod, IsInternationalBuildHooker.class);
     }
 
     private void hookDefaultCombinedPicker(ClassLoader classLoader) throws ClassNotFoundException {
