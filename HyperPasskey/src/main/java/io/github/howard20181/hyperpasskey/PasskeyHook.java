@@ -45,13 +45,10 @@ public class PasskeyHook extends XposedModule {
     private final static VoidMethodHooker isInternationalBuildHooker = new IsInternationalBuildHooker();
     private final static MethodHooker getOemOverrideComponentNameHooker = new GetOemOverrideComponentNameHooker();
 
-    static {
-        System.loadLibrary("dexkit");
-    }
-
     @Override
     public void onModuleLoaded(@NonNull ModuleLoadedParam param) {
         module = this;
+        System.loadLibrary("dexkit");
     }
 
     @Override
