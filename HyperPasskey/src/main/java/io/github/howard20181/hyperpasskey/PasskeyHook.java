@@ -42,13 +42,15 @@ public class PasskeyHook extends XposedModule {
     private static Field fIsInternationalBuildBoolean;
     private static Field fHybridService;
     private static boolean originalIsInternationalBuild;
+    private final static VoidMethodHooker isInternationalBuildHooker = new IsInternationalBuildHooker();
+    private final static MethodHooker getOemOverrideComponentNameHooker = new GetOemOverrideComponentNameHooker();
 
     static {
         System.loadLibrary("dexkit");
     }
 
-    public PasskeyHook() {
-        super();
+    @Override
+    public void onModuleLoaded(@NonNull ModuleLoadedParam param) {
         module = this;
     }
 
@@ -142,8 +144,6 @@ public class PasskeyHook extends XposedModule {
         }
     }
 
-    private final static VoidMethodHooker isInternationalBuildHooker = new IsInternationalBuildHooker();
-
     private void hookDefaultCombinedPreferenceController(ClassLoader classLoader) throws ClassNotFoundException {
         var iClass = classLoader.loadClass("com.android.settings.applications.credentials.DefaultCombinedPreferenceController");
         if (iClass != null) {
@@ -174,23 +174,37 @@ public class PasskeyHook extends XposedModule {
     }
 
     private void hookOnCombiPreferenceClickListener(ClassLoader classLoader, DexKitBridge bridge) {
-        var onLeftSideClickedMatcher = MethodMatcher.create().name("onLeftSideClicked").paramCount(0).addInvoke("Lcom/android/settings/applications/credentials/CombinedProviderInfo;->launchSettingsActivityIntent(Landroid/content/Context;Ljava/lang/CharSequence;Ljava/lang/CharSequence;I)V");
-        bridge.findClass(FindClass.create().searchPackages("com.android.settings.applications.credentials").matcher(ClassMatcher.create().methods(MethodsMatcher.create().add(onLeftSideClickedMatcher)))).findMethod(FindMethod.create().matcher(onLeftSideClickedMatcher)).forEach(methodData -> {
-            try {
-                hook(methodData.getMethodInstance(classLoader)).intercept(isInternationalBuildHooker);
-            } catch (NoSuchMethodException e) {
-                log(Log.ERROR, TAG, "hook onLeftSideClicked failed", e);
-            }
-        });
+        var onLeftSideClickedMatcher = MethodMatcher.create()
+                .name("onLeftSideClicked")
+                .paramCount(0)
+                .addInvoke("Lcom/android/settings/applications/credentials/CombinedProviderInfo;->launchSettingsActivityIntent(Landroid/content/Context;Ljava/lang/CharSequence;Ljava/lang/CharSequence;I)V");
+        bridge.findClass(FindClass.create()
+                        .searchPackages("com.android.settings.applications.credentials")
+                        .matcher(ClassMatcher.create()
+                                .methods(MethodsMatcher.create()
+                                        .add(onLeftSideClickedMatcher))))
+                .findMethod(FindMethod.create()
+                        .matcher(onLeftSideClickedMatcher))
+                .forEach(methodData -> {
+                    try {
+                        hook(methodData.getMethodInstance(classLoader)).intercept(isInternationalBuildHooker);
+                    } catch (NoSuchMethodException e) {
+                        log(Log.ERROR, TAG, "hook onLeftSideClicked failed", e);
+                    }
+                });
     }
 
     private void hookRequestSession(ClassLoader classLoader) throws NoSuchMethodException, ClassNotFoundException {
         var aClass = classLoader.loadClass("com.android.server.credentials.RequestSession$SessionLifetime");
         Constructor<?> constructorRequestSession;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
-            constructorRequestSession = cRequestSession.getDeclaredConstructor(Context.class, aClass, Object.class, int.class, int.class, Object.class, Object.class, String.class, CallingAppInfo.class, Set.class, CancellationSignal.class, long.class, boolean.class);
+            constructorRequestSession = cRequestSession.getDeclaredConstructor(Context.class, aClass,
+                    Object.class, int.class, int.class, Object.class, Object.class, String.class,
+                    CallingAppInfo.class, Set.class, CancellationSignal.class, long.class, boolean.class);
         } else {
-            constructorRequestSession = cRequestSession.getDeclaredConstructor(Context.class, aClass, Object.class, int.class, int.class, Object.class, Object.class, String.class, CallingAppInfo.class, Set.class, CancellationSignal.class, long.class);
+            constructorRequestSession = cRequestSession.getDeclaredConstructor(Context.class, aClass,
+                    Object.class, int.class, int.class, Object.class, Object.class, String.class,
+                    CallingAppInfo.class, Set.class, CancellationSignal.class, long.class);
         }
         hook(constructorRequestSession).intercept(chain -> {
             chain.proceed();
@@ -200,8 +214,6 @@ public class PasskeyHook extends XposedModule {
         });
     }
 
-    private final static MethodHooker getOemOverrideComponentNameHooker = new GetOemOverrideComponentNameHooker();
-
     private void hookIntentFactory(ClassLoader classLoader) throws NoSuchMethodException, ClassNotFoundException {
         Class<?> classIntentFactory;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
@@ -209,16 +221,20 @@ public class PasskeyHook extends XposedModule {
             classIntentFactory = classLoader.loadClass("android.credentials.selection.IntentFactory");
             var classIntentCreationResultBuilder = classLoader.loadClass("android.credentials.selection.IntentCreationResult$Builder");
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA) {
-                mGetOemOverrideComponentName = classIntentFactory.getDeclaredMethod("getOemOverrideComponentName", Context.class, classIntentCreationResultBuilder, int.class);
+                mGetOemOverrideComponentName = classIntentFactory.getDeclaredMethod("getOemOverrideComponentName",
+                        Context.class, classIntentCreationResultBuilder, int.class);
             } else {
-                mGetOemOverrideComponentName = classIntentFactory.getDeclaredMethod("getOemOverrideComponentName", Context.class, classIntentCreationResultBuilder);
+                mGetOemOverrideComponentName = classIntentFactory.getDeclaredMethod("getOemOverrideComponentName",
+                        Context.class, classIntentCreationResultBuilder);
             }
             hook(mGetOemOverrideComponentName).intercept(getOemOverrideComponentNameHooker);
         } else {
             classIntentFactory = classLoader.loadClass("android.credentials.ui.IntentFactory");
             var classRequestInfo = classLoader.loadClass("android.credentials.ui.RequestInfo");
-            var mCreateCredentialSelectorIntent = classIntentFactory.getDeclaredMethod("createCredentialSelectorIntent", classRequestInfo, ArrayList.class, ArrayList.class, ResultReceiver.class);
-            var mCreateCancelUiIntent = classIntentFactory.getDeclaredMethod("createCancelUiIntent", IBinder.class, boolean.class, String.class);
+            var mCreateCredentialSelectorIntent = classIntentFactory.getDeclaredMethod("createCredentialSelectorIntent",
+                    classRequestInfo, ArrayList.class, ArrayList.class, ResultReceiver.class);
+            var mCreateCancelUiIntent = classIntentFactory.getDeclaredMethod("createCancelUiIntent",
+                    IBinder.class, boolean.class, String.class);
             hook(mCreateCredentialSelectorIntent).intercept(getOemOverrideComponentNameHooker);
             hook(mCreateCancelUiIntent).intercept(getOemOverrideComponentNameHooker);
         }
@@ -229,20 +245,40 @@ public class PasskeyHook extends XposedModule {
         var cApplication = bridge.getClassData("Lcom/miui/securitycenter/Application;");
         if (cApplication != null) {
             try {
-                var mSetStringResourceConfigIfNeed = cApplication.findMethod(FindMethod.create().matcher(MethodMatcher.create().paramTypes(Context.class, String.class, int.class).addInvoke("Landroid/content/res/Resources;->getString(I)Ljava/lang/String;").addInvoke("Landroid/provider/Settings$Secure;->putString(Landroid/content/ContentResolver;Ljava/lang/String;Ljava/lang/String;)Z"))).single();
-                var setStringResourceConfigIfNeedMethodInstance = mSetStringResourceConfigIfNeed.getMethodInstance(classLoader);
-                deoptimize(setStringResourceConfigIfNeedMethodInstance);
-                var mConfigForAutofillService = cApplication.findMethod(FindMethod.create().matcher(MethodMatcher.create().paramTypes(Context.class).addEqString("autofill_service").addInvoke(mSetStringResourceConfigIfNeed.getDescriptor()))).single().getMethodInstance(classLoader);
+                var mSetStringResourceConfigIfNeed = cApplication.findMethod(FindMethod.create()
+                        .matcher(MethodMatcher.create()
+                                .paramTypes(Context.class, String.class, int.class)
+                                .addInvoke("Landroid/content/res/Resources;->getString(I)Ljava/lang/String;")
+                                .addInvoke("Landroid/provider/Settings$Secure;->putString(Landroid/content/ContentResolver;Ljava/lang/String;Ljava/lang/String;)Z")
+                        )).single();
+//                var setStringResourceConfigIfNeedMethodInstance = mSetStringResourceConfigIfNeed.getMethodInstance(classLoader);
+//                deoptimize(setStringResourceConfigIfNeedMethodInstance);
+                var mConfigForAutofillService = cApplication.findMethod(FindMethod.create()
+                        .matcher(MethodMatcher.create()
+                                .paramTypes(Context.class)
+                                .addEqString("autofill_service")
+                                .addInvoke(mSetStringResourceConfigIfNeed.getDescriptor())
+                        )).single().getMethodInstance(classLoader);
                 hook(mConfigForAutofillService).intercept(chain -> {
                 });
             } catch (NoSuchMethodException e) {
                 log(Log.ERROR, TAG, "hook configForAutofillService", e);
             }
             try {
-                var mSetStringArrayResourceConfigIfNeed = cApplication.findMethod(FindMethod.create().matcher(MethodMatcher.create().paramTypes(Context.class, String.class, int.class).addInvoke("Landroid/content/res/Resources;->getStringArray(I)[Ljava/lang/String;").addInvoke("Landroid/provider/Settings$Secure;->putString(Landroid/content/ContentResolver;Ljava/lang/String;Ljava/lang/String;)Z"))).single();
-                var setStringArrayResourceConfigIfNeedMethodInstance = mSetStringArrayResourceConfigIfNeed.getMethodInstance(classLoader);
-                deoptimize(setStringArrayResourceConfigIfNeedMethodInstance);
-                var mSetDefaultConfigForAutofillAndCredentialManager = cApplication.findMethod(FindMethod.create().matcher(MethodMatcher.create().paramTypes(Context.class).usingEqStrings("credential_service", "credential_service_primary").addInvoke(mSetStringArrayResourceConfigIfNeed.getDescriptor()))).single().getMethodInstance(classLoader);
+                var mSetStringArrayResourceConfigIfNeed = cApplication.findMethod(FindMethod.create()
+                        .matcher(MethodMatcher.create()
+                                .paramTypes(Context.class, String.class, int.class)
+                                .addInvoke("Landroid/content/res/Resources;->getStringArray(I)[Ljava/lang/String;")
+                                .addInvoke("Landroid/provider/Settings$Secure;->putString(Landroid/content/ContentResolver;Ljava/lang/String;Ljava/lang/String;)Z")
+                        )).single();
+//                var setStringArrayResourceConfigIfNeedMethodInstance = mSetStringArrayResourceConfigIfNeed.getMethodInstance(classLoader);
+//                deoptimize(setStringArrayResourceConfigIfNeedMethodInstance);
+                var mSetDefaultConfigForAutofillAndCredentialManager = cApplication.findMethod(FindMethod.create()
+                        .matcher(MethodMatcher.create()
+                                .paramTypes(Context.class)
+                                .usingEqStrings("credential_service", "credential_service_primary")
+                                .addInvoke(mSetStringArrayResourceConfigIfNeed.getDescriptor())
+                        )).single().getMethodInstance(classLoader);
                 hook(mSetDefaultConfigForAutofillAndCredentialManager).intercept(chain -> {
                 });
             } catch (NoSuchMethodException e) {
@@ -254,9 +290,11 @@ public class PasskeyHook extends XposedModule {
     private static ComponentName getOemComponentName() {
         ComponentName oemComponentName = null;
         try {
-            oemComponentName = ComponentName.unflattenFromString(GetOemOverrideComponentNameHooker.oemComponentString);
+            oemComponentName = ComponentName.unflattenFromString(
+                    GetOemOverrideComponentNameHooker.oemComponentString);
         } catch (Exception e) {
-            module.log(Log.ERROR, TAG, "Failed to parse OEM component name " + GetOemOverrideComponentNameHooker.oemComponentString + ": " + e);
+            module.log(Log.ERROR, TAG, "Failed to parse OEM component name "
+                    + GetOemOverrideComponentNameHooker.oemComponentString + ": " + e);
         }
         return oemComponentName;
     }
@@ -268,31 +306,42 @@ public class PasskeyHook extends XposedModule {
         @Override
         public ComponentName intercept(@NonNull MethodChain chain) throws Throwable {
             var args = chain.getArgs();
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM && args.size() >= 2 && args.get(0) instanceof Context context && args.get(1) instanceof IntentCreationResult.Builder intentResultBuilder) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM && args.size() >= 2
+                    && args.get(0) instanceof Context context
+                    && args.get(1) instanceof IntentCreationResult.Builder intentResultBuilder) {
                 ComponentName oemComponentName = getOemComponentName();
                 if (oemComponentName != null) {
                     try {
                         intentResultBuilder.setOemUiPackageName(oemComponentName.getPackageName());
-                        ActivityInfo info = context.getPackageManager().getActivityInfo(oemComponentName, PackageManager.ComponentInfoFlags.of(PackageManager.MATCH_SYSTEM_ONLY));
+                        ActivityInfo info = context.getPackageManager().getActivityInfo(oemComponentName,
+                                PackageManager.ComponentInfoFlags.of(PackageManager.MATCH_SYSTEM_ONLY));
                         boolean oemComponentEnabled = info.enabled;
-                        int runtimeComponentEnabledState = context.getPackageManager().getComponentEnabledSetting(oemComponentName);
-                        if (runtimeComponentEnabledState == PackageManager.COMPONENT_ENABLED_STATE_ENABLED) {
+                        int runtimeComponentEnabledState = context.getPackageManager()
+                                .getComponentEnabledSetting(oemComponentName);
+                        if (runtimeComponentEnabledState
+                                == PackageManager.COMPONENT_ENABLED_STATE_ENABLED) {
                             oemComponentEnabled = true;
-                        } else if (runtimeComponentEnabledState == PackageManager.COMPONENT_ENABLED_STATE_DISABLED) {
+                        } else if (runtimeComponentEnabledState
+                                == PackageManager.COMPONENT_ENABLED_STATE_DISABLED) {
                             oemComponentEnabled = false;
                         }
                         if (oemComponentEnabled && info.exported) {
-                            intentResultBuilder.setOemUiUsageStatus(IntentCreationResult.OemUiUsageStatus.SUCCESS);
+                            intentResultBuilder.setOemUiUsageStatus(IntentCreationResult
+                                    .OemUiUsageStatus.SUCCESS);
                             return oemComponentName;
                         } else {
-                            intentResultBuilder.setOemUiUsageStatus(IntentCreationResult.OemUiUsageStatus.OEM_UI_CONFIG_SPECIFIED_FOUND_BUT_NOT_ENABLED);
+                            intentResultBuilder.setOemUiUsageStatus(IntentCreationResult
+                                    .OemUiUsageStatus.OEM_UI_CONFIG_SPECIFIED_FOUND_BUT_NOT_ENABLED);
                         }
                     } catch (PackageManager.NameNotFoundException e) {
-                        intentResultBuilder.setOemUiUsageStatus(IntentCreationResult.OemUiUsageStatus.OEM_UI_CONFIG_SPECIFIED_BUT_NOT_FOUND);
-                        module.log(Log.ERROR, TAG, "Unable to find oem CredMan UI component: " + oemComponentString + ".");
+                        intentResultBuilder.setOemUiUsageStatus(IntentCreationResult
+                                .OemUiUsageStatus.OEM_UI_CONFIG_SPECIFIED_BUT_NOT_FOUND);
+                        module.log(Log.ERROR, TAG, "Unable to find oem CredMan UI component: "
+                                + oemComponentString + ".");
                     }
                 } else {
-                    intentResultBuilder.setOemUiUsageStatus(IntentCreationResult.OemUiUsageStatus.OEM_UI_CONFIG_SPECIFIED_BUT_NOT_FOUND);
+                    intentResultBuilder.setOemUiUsageStatus(IntentCreationResult
+                            .OemUiUsageStatus.OEM_UI_CONFIG_SPECIFIED_BUT_NOT_FOUND);
                     module.log(Log.ERROR, TAG, "Invalid OEM ComponentName format.");
                 }
             }
