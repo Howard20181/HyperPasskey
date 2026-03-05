@@ -183,19 +183,16 @@ public class PasskeyHook extends XposedModule {
                 .paramCount(0)
                 .addInvoke("Lcom/android/settings/applications/credentials/CombinedProviderInfo;->launchSettingsActivityIntent(Landroid/content/Context;Ljava/lang/CharSequence;Ljava/lang/CharSequence;I)V");
         bridge.findClass(FindClass.create()
-                        .searchPackages("com.android.settings.applications.credentials")
-                        .matcher(ClassMatcher.create()
-                                .methods(MethodsMatcher.create()
-                                        .add(onLeftSideClickedMatcher))))
-                .findMethod(FindMethod.create()
-                        .matcher(onLeftSideClickedMatcher))
-                .forEach(methodData -> {
-                    try {
-                        hook(methodData.getMethodInstance(classLoader)).intercept(isInternationalBuildHooker);
-                    } catch (NoSuchMethodException e) {
-                        log(Log.ERROR, TAG, "hook onLeftSideClicked failed", e);
-                    }
-                });
+                .searchPackages("com.android.settings.applications.credentials")
+                .matcher(ClassMatcher.create().methods(MethodsMatcher.create().add(onLeftSideClickedMatcher)))
+        ).findMethod(FindMethod.create().matcher(onLeftSideClickedMatcher)
+        ).forEach(methodData -> {
+            try {
+                hook(methodData.getMethodInstance(classLoader)).intercept(isInternationalBuildHooker);
+            } catch (NoSuchMethodException e) {
+                log(Log.ERROR, TAG, "hook onLeftSideClicked failed", e);
+            }
+        });
     }
 
     private void hookRequestSession(ClassLoader classLoader) throws NoSuchMethodException, ClassNotFoundException {
