@@ -138,7 +138,7 @@ public class PasskeyHook extends XposedModule {
     }
 
     private void hookMiFiDoBean(ClassLoader classLoader) throws ClassNotFoundException {
-        var iClass = classLoader.loadClass("com.xiaomi.scanner.code.utils.bean.MiFiDoBean");
+        var iClass = classLoader.loadClass("com.xiaomi.scanner.module.code.utils.bean.MiFiDoBean");
         if (iClass != null) {
             try {
                 var aMethod = iClass.getDeclaredMethod("getAppPackageName");
