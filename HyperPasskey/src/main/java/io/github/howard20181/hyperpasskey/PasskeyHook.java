@@ -73,10 +73,9 @@ public class PasskeyHook extends XposedModule {
         }
     }
 
-    @Override
-    public void onPackageReady(@NonNull PackageReadyParam param) {
+    public void onPackageLoaded(@NonNull PackageLoadedParam param) {
         if (!param.isFirstPackage()) return;
-        var classLoader = param.getClassLoader();
+        var classLoader = param.getDefaultClassLoader();
         var pn = param.getPackageName();
         try {
             var buildClass = classLoader.loadClass("miui.os.Build");
@@ -86,6 +85,7 @@ public class PasskeyHook extends XposedModule {
         } catch (Exception e) {
             log(Log.ERROR, TAG, "find IS_INTERNATIONAL_BUILD failed", e);
         }
+        log(Log.DEBUG, TAG, "onPackageLoaded: " + pn);
         try (var bridge = DexKitBridge.create(classLoader, true)) {
             switch (pn) {
                 case settingsPackageName -> {
@@ -130,6 +130,13 @@ public class PasskeyHook extends XposedModule {
         }
     }
 
+    @Override
+    public void onPackageReady(@NonNull PackageReadyParam param) {
+        if (!param.isFirstPackage()) return;
+        var pn = param.getPackageName();
+        log(Log.DEBUG, TAG, "onPackageReady: " + pn);
+    }
+
     private void hookMiFiDoBean(ClassLoader classLoader) throws ClassNotFoundException {
         var iClass = classLoader.loadClass("com.xiaomi.scanner.code.utils.bean.MiFiDoBean");
         if (iClass != null) {
@@ -156,6 +163,7 @@ public class PasskeyHook extends XposedModule {
         var iClass = classLoader.loadClass("com.android.settings.applications.defaultapps.DefaultAppPreferenceController");
         var PreferenceClass = classLoader.loadClass("androidx.preference.Preference");
         var aMethod = iClass.getDeclaredMethod("updateState", PreferenceClass);
+        log(Log.DEBUG, TAG, "updateState: " + aMethod);
         hook(aMethod).intercept(isInternationalBuildHooker);
     }
 
@@ -248,8 +256,8 @@ public class PasskeyHook extends XposedModule {
                                 .addInvoke("Landroid/content/res/Resources;->getString(I)Ljava/lang/String;")
                                 .addInvoke("Landroid/provider/Settings$Secure;->putString(Landroid/content/ContentResolver;Ljava/lang/String;Ljava/lang/String;)Z")
                         )).single();
-//                var setStringResourceConfigIfNeedMethodInstance = mSetStringResourceConfigIfNeed.getMethodInstance(classLoader);
-//                deoptimize(setStringResourceConfigIfNeedMethodInstance);
+                var setStringResourceConfigIfNeedMethodInstance = mSetStringResourceConfigIfNeed.getMethodInstance(classLoader);
+                deoptimize(setStringResourceConfigIfNeedMethodInstance);
                 var mConfigForAutofillService = cApplication.findMethod(FindMethod.create()
                         .matcher(MethodMatcher.create()
                                 .paramTypes(Context.class)
@@ -268,8 +276,8 @@ public class PasskeyHook extends XposedModule {
                                 .addInvoke("Landroid/content/res/Resources;->getStringArray(I)[Ljava/lang/String;")
                                 .addInvoke("Landroid/provider/Settings$Secure;->putString(Landroid/content/ContentResolver;Ljava/lang/String;Ljava/lang/String;)Z")
                         )).single();
-//                var setStringArrayResourceConfigIfNeedMethodInstance = mSetStringArrayResourceConfigIfNeed.getMethodInstance(classLoader);
-//                deoptimize(setStringArrayResourceConfigIfNeedMethodInstance);
+                var setStringArrayResourceConfigIfNeedMethodInstance = mSetStringArrayResourceConfigIfNeed.getMethodInstance(classLoader);
+                deoptimize(setStringArrayResourceConfigIfNeedMethodInstance);
                 var mSetDefaultConfigForAutofillAndCredentialManager = cApplication.findMethod(FindMethod.create()
                         .matcher(MethodMatcher.create()
                                 .paramTypes(Context.class)
@@ -353,11 +361,13 @@ public class PasskeyHook extends XposedModule {
         @Override
         public void intercept(@NonNull MethodChain chain) throws Throwable {
             if (fIsInternationalBuildBoolean != null) {
+                module.log(Log.INFO, TAG, "isInternationalBuild: " + fIsInternationalBuildBoolean.getBoolean(null));
                 fIsInternationalBuildBoolean.setBoolean(null, true);
             }
             chain.proceed();
             if (fIsInternationalBuildBoolean != null) {
                 fIsInternationalBuildBoolean.setBoolean(null, originalIsInternationalBuild);
+                module.log(Log.INFO, TAG, "isInternationalBuild: " + fIsInternationalBuildBoolean.getBoolean(null));
             }
         }
     }
