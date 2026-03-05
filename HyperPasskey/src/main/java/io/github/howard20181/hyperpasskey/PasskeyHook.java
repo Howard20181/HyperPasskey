@@ -3,18 +3,16 @@ package io.github.howard20181.hyperpasskey;
 import android.annotation.SuppressLint;
 import android.content.ComponentName;
 import android.content.Context;
-import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
 import android.credentials.CredentialManager;
 import android.os.Build;
 import android.credentials.selection.IntentCreationResult;
 import android.os.CancellationSignal;
-import android.os.IBinder;
-import android.os.ResultReceiver;
 import android.service.credentials.CallingAppInfo;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.RequiresApi;
 
 import org.luckypray.dexkit.DexKitBridge;
 import org.luckypray.dexkit.query.FindClass;
@@ -26,7 +24,6 @@ import org.luckypray.dexkit.query.matchers.MethodsMatcher;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.util.ArrayList;
 import java.util.Set;
 
 import io.github.libxposed.api.XposedModule;
@@ -43,7 +40,6 @@ public class PasskeyHook extends XposedModule {
     private static Field fHybridService;
     private static boolean originalIsInternationalBuild;
     private final static MethodHooker isInternationalBuildHooker = new IsInternationalBuildHooker();
-    private final static MethodHooker getOemOverrideComponentNameHooker = new GetOemOverrideComponentNameHooker();
 
     @Override
     public void onModuleLoaded(@NonNull ModuleLoadedParam param) {
@@ -55,10 +51,12 @@ public class PasskeyHook extends XposedModule {
     public void onSystemServerStarting(@NonNull SystemServerStartingParam param) {
         var classLoader = param.getClassLoader();
         try {
-            try {
-                hookIntentFactory(classLoader);
-            } catch (Exception e) {
-                log(Log.ERROR, TAG, "hook IntentFactory failed", e);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+                try {
+                    hookIntentFactory(classLoader);
+                } catch (Exception e) {
+                    log(Log.ERROR, TAG, "hook IntentFactory failed", e);
+                }
             }
             try {
                 cRequestSession = classLoader.loadClass("com.android.server.credentials.RequestSession");
@@ -68,7 +66,8 @@ public class PasskeyHook extends XposedModule {
             } catch (Exception e) {
                 log(Log.ERROR, TAG, "hook RequestSession failed", e);
             }
-        } catch (Throwable tr) {
+        } catch (
+                Throwable tr) {
             log(Log.ERROR, TAG, "Error hooking system service", tr);
         }
     }
@@ -161,9 +160,8 @@ public class PasskeyHook extends XposedModule {
 
     private void hookDefaultAppPreferenceController(ClassLoader classLoader) throws ClassNotFoundException, NoSuchMethodException {
         var iClass = classLoader.loadClass("com.android.settings.applications.defaultapps.DefaultAppPreferenceController");
-        var PreferenceClass = classLoader.loadClass("androidx.preference.Preference");
-        var aMethod = iClass.getDeclaredMethod("updateState", PreferenceClass);
-        log(Log.DEBUG, TAG, "updateState: " + aMethod);
+        var preferenceClass = classLoader.loadClass("androidx.preference.Preference");
+        var aMethod = iClass.getDeclaredMethod("updateState", preferenceClass);
         hook(aMethod).intercept(isInternationalBuildHooker);
     }
 
@@ -219,30 +217,19 @@ public class PasskeyHook extends XposedModule {
         });
     }
 
+    @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
     private void hookIntentFactory(ClassLoader classLoader) throws NoSuchMethodException, ClassNotFoundException {
-        Class<?> classIntentFactory;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
-            Method mGetOemOverrideComponentName;
-            classIntentFactory = classLoader.loadClass("android.credentials.selection.IntentFactory");
-            var classIntentCreationResultBuilder = classLoader.loadClass("android.credentials.selection.IntentCreationResult$Builder");
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA) {
-                mGetOemOverrideComponentName = classIntentFactory.getDeclaredMethod("getOemOverrideComponentName",
-                        Context.class, classIntentCreationResultBuilder, int.class);
-            } else {
-                mGetOemOverrideComponentName = classIntentFactory.getDeclaredMethod("getOemOverrideComponentName",
-                        Context.class, classIntentCreationResultBuilder);
-            }
-            hook(mGetOemOverrideComponentName).intercept(getOemOverrideComponentNameHooker);
+        Method mGetOemOverrideComponentName;
+        var classIntentFactory = classLoader.loadClass("android.credentials.selection.IntentFactory");
+        var classIntentCreationResultBuilder = classLoader.loadClass("android.credentials.selection.IntentCreationResult$Builder");
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA) {
+            mGetOemOverrideComponentName = classIntentFactory.getDeclaredMethod("getOemOverrideComponentName",
+                    Context.class, classIntentCreationResultBuilder, int.class);
         } else {
-            classIntentFactory = classLoader.loadClass("android.credentials.ui.IntentFactory");
-            var classRequestInfo = classLoader.loadClass("android.credentials.ui.RequestInfo");
-            var mCreateCredentialSelectorIntent = classIntentFactory.getDeclaredMethod("createCredentialSelectorIntent",
-                    classRequestInfo, ArrayList.class, ArrayList.class, ResultReceiver.class);
-            var mCreateCancelUiIntent = classIntentFactory.getDeclaredMethod("createCancelUiIntent",
-                    IBinder.class, boolean.class, String.class);
-            hook(mCreateCredentialSelectorIntent).intercept(getOemOverrideComponentNameHooker);
-            hook(mCreateCancelUiIntent).intercept(getOemOverrideComponentNameHooker);
+            mGetOemOverrideComponentName = classIntentFactory.getDeclaredMethod("getOemOverrideComponentName",
+                    Context.class, classIntentCreationResultBuilder);
         }
+        hook(mGetOemOverrideComponentName).intercept(new GetOemOverrideComponentNameHooker());
     }
 
 
@@ -292,66 +279,48 @@ public class PasskeyHook extends XposedModule {
         }
     }
 
-    private static ComponentName getOemComponentName() {
-        ComponentName oemComponentName = null;
-        try {
-            oemComponentName = ComponentName.unflattenFromString(
-                    GetOemOverrideComponentNameHooker.oemComponentString);
-        } catch (Exception e) {
-            module.log(Log.ERROR, TAG, "Failed to parse OEM component name "
-                    + GetOemOverrideComponentNameHooker.oemComponentString + ": " + e);
-        }
-        return oemComponentName;
-    }
-
-
+    @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
     private static class GetOemOverrideComponentNameHooker implements MethodHooker {
         private static final String oemComponentString = "com.google.android.gms/.identitycredentials.ui.CredentialChooserActivity";
 
         @Override
-        public ComponentName intercept(@NonNull MethodChain chain) throws Throwable {
+        public Object intercept(@NonNull MethodChain chain) throws Throwable {
             var args = chain.getArgs();
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM && args.size() >= 2
-                    && args.get(0) instanceof Context context
-                    && args.get(1) instanceof IntentCreationResult.Builder intentResultBuilder) {
-                ComponentName oemComponentName = getOemComponentName();
-                if (oemComponentName != null) {
-                    try {
-                        intentResultBuilder.setOemUiPackageName(oemComponentName.getPackageName());
-                        ActivityInfo info = context.getPackageManager().getActivityInfo(oemComponentName,
-                                PackageManager.ComponentInfoFlags.of(PackageManager.MATCH_SYSTEM_ONLY));
-                        boolean oemComponentEnabled = info.enabled;
-                        int runtimeComponentEnabledState = context.getPackageManager()
-                                .getComponentEnabledSetting(oemComponentName);
-                        if (runtimeComponentEnabledState
-                                == PackageManager.COMPONENT_ENABLED_STATE_ENABLED) {
-                            oemComponentEnabled = true;
-                        } else if (runtimeComponentEnabledState
-                                == PackageManager.COMPONENT_ENABLED_STATE_DISABLED) {
-                            oemComponentEnabled = false;
+            if (args.size() >= 2 && args.get(0) instanceof Context context && args.get(1) instanceof IntentCreationResult.Builder intentResultBuilder) {
+                ComponentName oemComponentName;
+                try {
+                    oemComponentName = ComponentName.unflattenFromString(oemComponentString);
+                    if (oemComponentName != null) {
+                        try {
+                            var info = context.getPackageManager().getActivityInfo(oemComponentName,
+                                    PackageManager.ComponentInfoFlags.of(PackageManager.MATCH_SYSTEM_ONLY));
+                            boolean oemComponentEnabled = info.enabled;
+                            int runtimeComponentEnabledState = context.getPackageManager()
+                                    .getComponentEnabledSetting(oemComponentName);
+                            if (runtimeComponentEnabledState
+                                    == PackageManager.COMPONENT_ENABLED_STATE_ENABLED) {
+                                oemComponentEnabled = true;
+                            } else if (runtimeComponentEnabledState
+                                    == PackageManager.COMPONENT_ENABLED_STATE_DISABLED) {
+                                oemComponentEnabled = false;
+                            }
+                            if (oemComponentEnabled && info.exported) {
+                                intentResultBuilder.setOemUiPackageName(oemComponentName.getPackageName());
+                                intentResultBuilder.setOemUiUsageStatus(IntentCreationResult
+                                        .OemUiUsageStatus.SUCCESS);
+                                return oemComponentName;
+                            }
+                        } catch (PackageManager.NameNotFoundException e) {
+                            module.log(Log.ERROR, TAG, "Unable to find oem CredMan UI component: "
+                                    + oemComponentString + ".", e);
                         }
-                        if (oemComponentEnabled && info.exported) {
-                            intentResultBuilder.setOemUiUsageStatus(IntentCreationResult
-                                    .OemUiUsageStatus.SUCCESS);
-                            return oemComponentName;
-                        } else {
-                            intentResultBuilder.setOemUiUsageStatus(IntentCreationResult
-                                    .OemUiUsageStatus.OEM_UI_CONFIG_SPECIFIED_FOUND_BUT_NOT_ENABLED);
-                        }
-                    } catch (PackageManager.NameNotFoundException e) {
-                        intentResultBuilder.setOemUiUsageStatus(IntentCreationResult
-                                .OemUiUsageStatus.OEM_UI_CONFIG_SPECIFIED_BUT_NOT_FOUND);
-                        module.log(Log.ERROR, TAG, "Unable to find oem CredMan UI component: "
-                                + oemComponentString + ".");
                     }
-                } else {
-                    intentResultBuilder.setOemUiUsageStatus(IntentCreationResult
-                            .OemUiUsageStatus.OEM_UI_CONFIG_SPECIFIED_BUT_NOT_FOUND);
-                    module.log(Log.ERROR, TAG, "Invalid OEM ComponentName format.");
+                } catch (Exception e) {
+                    module.log(Log.ERROR, TAG, "Failed to parse OEM component name "
+                            + oemComponentString + ": " + e);
                 }
             }
-            chain.proceed();
-            return null;
+            return chain.proceed();
         }
     }
 
@@ -360,10 +329,8 @@ public class PasskeyHook extends XposedModule {
         @Override
         public Object intercept(@NonNull MethodChain chain) throws Throwable {
             if (fIsInternationalBuildBoolean != null) {
-                module.log(Log.INFO, TAG, "before isInternationalBuild: " + fIsInternationalBuildBoolean.getBoolean(chain.getThisObject()));
                 fIsInternationalBuildBoolean.setBoolean(null, true);
                 var proceed = chain.proceed();
-                module.log(Log.INFO, TAG, "after isInternationalBuild: " + fIsInternationalBuildBoolean.getBoolean(chain.getThisObject()));
                 fIsInternationalBuildBoolean.setBoolean(null, originalIsInternationalBuild);
                 return proceed;
             }
