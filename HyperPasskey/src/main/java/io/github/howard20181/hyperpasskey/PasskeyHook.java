@@ -42,7 +42,7 @@ public class PasskeyHook extends XposedModule {
     private static Field fIsInternationalBuildBoolean;
     private static Field fHybridService;
     private static boolean originalIsInternationalBuild;
-    private final static VoidMethodHooker isInternationalBuildHooker = new IsInternationalBuildHooker();
+    private final static MethodHooker isInternationalBuildHooker = new IsInternationalBuildHooker();
     private final static MethodHooker getOemOverrideComponentNameHooker = new GetOemOverrideComponentNameHooker();
 
     @Override
@@ -355,20 +355,19 @@ public class PasskeyHook extends XposedModule {
         }
     }
 
-
-    private static class IsInternationalBuildHooker implements VoidMethodHooker {
+    private static class IsInternationalBuildHooker implements MethodHooker {
 
         @Override
-        public void intercept(@NonNull MethodChain chain) throws Throwable {
+        public Object intercept(@NonNull MethodChain chain) throws Throwable {
             if (fIsInternationalBuildBoolean != null) {
-                module.log(Log.INFO, TAG, "isInternationalBuild: " + fIsInternationalBuildBoolean.getBoolean(null));
+                module.log(Log.INFO, TAG, "before isInternationalBuild: " + fIsInternationalBuildBoolean.getBoolean(chain.getThisObject()));
                 fIsInternationalBuildBoolean.setBoolean(null, true);
-            }
-            chain.proceed();
-            if (fIsInternationalBuildBoolean != null) {
+                var proceed = chain.proceed();
+                module.log(Log.INFO, TAG, "after isInternationalBuild: " + fIsInternationalBuildBoolean.getBoolean(chain.getThisObject()));
                 fIsInternationalBuildBoolean.setBoolean(null, originalIsInternationalBuild);
-                module.log(Log.INFO, TAG, "isInternationalBuild: " + fIsInternationalBuildBoolean.getBoolean(null));
+                return proceed;
             }
+            return chain.proceed();
         }
     }
 }
