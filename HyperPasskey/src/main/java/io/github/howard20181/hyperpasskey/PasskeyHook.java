@@ -15,6 +15,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.RequiresApi;
 
 import org.luckypray.dexkit.DexKitBridge;
+import org.luckypray.dexkit.exceptions.NoResultException;
 import org.luckypray.dexkit.query.FindClass;
 import org.luckypray.dexkit.query.FindMethod;
 import org.luckypray.dexkit.query.matchers.ClassMatcher;
@@ -253,8 +254,8 @@ public class PasskeyHook extends XposedModule {
                         )).single().getMethodInstance(classLoader);
                 hook(mConfigForAutofillService).intercept(chain -> {
                 });
-            } catch (NoSuchMethodException e) {
-                log(Log.ERROR, TAG, "hook configForAutofillService", e);
+            } catch (NoSuchMethodException | NoResultException e) {
+                log(Log.WARN, TAG, "hook configForAutofillService", e);
             }
             try {
                 var mSetStringArrayResourceConfigIfNeed = cApplication.findMethod(FindMethod.create()
@@ -273,7 +274,7 @@ public class PasskeyHook extends XposedModule {
                         )).single().getMethodInstance(classLoader);
                 hook(mSetDefaultConfigForAutofillAndCredentialManager).intercept(chain -> {
                 });
-            } catch (NoSuchMethodException e) {
+            } catch (NoSuchMethodException | NoResultException e) {
                 log(Log.ERROR, TAG, "hook setDefaultConfigForAutofillAndCredentialManager", e);
             }
         }
