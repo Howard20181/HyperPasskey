@@ -12,6 +12,7 @@ import android.service.credentials.CallingAppInfo;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.annotation.RequiresApi;
 
 import org.luckypray.dexkit.DexKitBridge;
@@ -40,7 +41,7 @@ public class PasskeyHook extends XposedModule {
     private static Field fIsInternationalBuildBoolean;
     private static Field fHybridService;
     private static boolean originalIsInternationalBuild;
-    private final static MethodHooker isInternationalBuildHooker = new IsInternationalBuildHooker();
+    private final static Hooker<Method> isInternationalBuildHooker = new IsInternationalBuildHooker();
 
     @Override
     public void onModuleLoaded(@NonNull ModuleLoadedParam param) {
@@ -212,6 +213,7 @@ public class PasskeyHook extends XposedModule {
             if (fHybridService != null) {
                 fHybridService.set(chain.getThisObject(), "com.google.android.gms/.auth.api.credentials.credman.service.RemoteService");
             }
+            return null;
         });
     }
 
@@ -249,8 +251,7 @@ public class PasskeyHook extends XposedModule {
                                 .addEqString("autofill_service")
                                 .addInvoke(mSetStringResourceConfigIfNeed.getDescriptor())
                         )).single().getMethodInstance(classLoader);
-                hook(mConfigForAutofillService).intercept(chain -> {
-                });
+                hook(mConfigForAutofillService).intercept(chain -> null);
             } catch (NoSuchMethodException | NoResultException e) {
                 log(Log.WARN, TAG, "hook configForAutofillService", e);
             }
@@ -269,8 +270,7 @@ public class PasskeyHook extends XposedModule {
                                 .usingEqStrings("credential_service", "credential_service_primary")
                                 .addInvoke(mSetStringArrayResourceConfigIfNeed.getDescriptor())
                         )).single().getMethodInstance(classLoader);
-                hook(mSetDefaultConfigForAutofillAndCredentialManager).intercept(chain -> {
-                });
+                hook(mSetDefaultConfigForAutofillAndCredentialManager).intercept(chain -> null);
             } catch (NoSuchMethodException | NoResultException e) {
                 log(Log.ERROR, TAG, "hook setDefaultConfigForAutofillAndCredentialManager", e);
             }
@@ -278,11 +278,11 @@ public class PasskeyHook extends XposedModule {
     }
 
     @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
-    private static class GetOemOverrideComponentNameHooker implements MethodHooker {
+    private static class GetOemOverrideComponentNameHooker implements Hooker<Method> {
         private static final String oemComponentString = "com.google.android.gms/.identitycredentials.ui.CredentialChooserActivity";
 
         @Override
-        public Object intercept(@NonNull MethodChain chain) throws Throwable {
+        public Object intercept(@NonNull Chain chain) throws Throwable {
             var args = chain.getArgs();
             if (args.size() >= 2 && args.get(0) instanceof Context context && args.get(1) instanceof IntentCreationResult.Builder intentResultBuilder) {
                 ComponentName oemComponentName;
@@ -322,10 +322,11 @@ public class PasskeyHook extends XposedModule {
         }
     }
 
-    private static class IsInternationalBuildHooker implements MethodHooker {
+    private static class IsInternationalBuildHooker implements Hooker<Method> {
 
+        @Nullable
         @Override
-        public Object intercept(@NonNull MethodChain chain) throws Throwable {
+        public Object intercept(@NonNull Chain chain) throws Throwable {
             if (fIsInternationalBuildBoolean != null) {
                 fIsInternationalBuildBoolean.setBoolean(null, true);
                 var proceed = chain.proceed();
