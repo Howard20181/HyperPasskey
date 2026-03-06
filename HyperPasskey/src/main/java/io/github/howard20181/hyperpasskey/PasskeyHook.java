@@ -24,6 +24,7 @@ import org.luckypray.dexkit.query.matchers.MethodMatcher;
 import org.luckypray.dexkit.query.matchers.MethodsMatcher;
 
 import java.lang.reflect.Constructor;
+import java.lang.reflect.Executable;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.Set;
@@ -41,7 +42,7 @@ public class PasskeyHook extends XposedModule {
     private static Field fIsInternationalBuildBoolean;
     private static Field fHybridService;
     private static boolean originalIsInternationalBuild;
-    private final static Hooker<Method> isInternationalBuildHooker = new IsInternationalBuildHooker();
+    private final static Hooker<Executable> isInternationalBuildHooker = new IsInternationalBuildHooker();
 
     @Override
     public void onModuleLoaded(@NonNull ModuleLoadedParam param) {
@@ -322,7 +323,7 @@ public class PasskeyHook extends XposedModule {
         }
     }
 
-    private static class IsInternationalBuildHooker implements Hooker<Method> {
+    private static class IsInternationalBuildHooker implements Hooker<Executable> {
 
         @Nullable
         @Override
