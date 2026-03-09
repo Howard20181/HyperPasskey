@@ -24,7 +24,6 @@ import org.luckypray.dexkit.query.matchers.MethodMatcher;
 import org.luckypray.dexkit.query.matchers.MethodsMatcher;
 
 import java.lang.reflect.Constructor;
-import java.lang.reflect.Executable;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.Set;
@@ -42,7 +41,7 @@ public class PasskeyHook extends XposedModule {
     private static Field fIsInternationalBuildBoolean;
     private static Field fHybridService;
     private static boolean originalIsInternationalBuild;
-    private final static Hooker<Executable> isInternationalBuildHooker = new IsInternationalBuildHooker();
+    private final static Hooker isInternationalBuildHooker = new IsInternationalBuildHooker();
 
     @Override
     public void onModuleLoaded(@NonNull ModuleLoadedParam param) {
@@ -75,9 +74,10 @@ public class PasskeyHook extends XposedModule {
         }
     }
 
-    public void onPackageLoaded(@NonNull PackageLoadedParam param) {
+    @Override
+    public void onPackageReady(@NonNull PackageReadyParam param) {
         if (!param.isFirstPackage()) return;
-        var classLoader = param.getDefaultClassLoader();
+        var classLoader = param.getClassLoader();
         var pn = param.getPackageName();
         try {
             var buildClass = classLoader.loadClass("miui.os.Build");
@@ -130,13 +130,6 @@ public class PasskeyHook extends XposedModule {
                 }
             }
         }
-    }
-
-    @Override
-    public void onPackageReady(@NonNull PackageReadyParam param) {
-        if (!param.isFirstPackage()) return;
-        var pn = param.getPackageName();
-        log(Log.DEBUG, TAG, "onPackageReady: " + pn);
     }
 
     private void hookMiFiDoBean(ClassLoader classLoader) throws ClassNotFoundException {
@@ -279,7 +272,7 @@ public class PasskeyHook extends XposedModule {
     }
 
     @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
-    private static class GetOemOverrideComponentNameHooker implements Hooker<Method> {
+    private static class GetOemOverrideComponentNameHooker implements Hooker {
         private static final String oemComponentString = "com.google.android.gms/.identitycredentials.ui.CredentialChooserActivity";
 
         @Override
@@ -323,7 +316,7 @@ public class PasskeyHook extends XposedModule {
         }
     }
 
-    private static class IsInternationalBuildHooker implements Hooker<Executable> {
+    private static class IsInternationalBuildHooker implements Hooker {
 
         @Nullable
         @Override
