@@ -19,6 +19,7 @@ jobs:
         with:
           repository: libxposed/api
           path: libxposed/api
+          ref: rfc
           fetch-depth: 0
 
       - name: set up JDK

@@ -3,19 +3,20 @@ package io.github.howard20181.hyperpasskey;
 import android.annotation.SuppressLint;
 import android.content.ComponentName;
 import android.content.Context;
-import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
 import android.credentials.CredentialManager;
 import android.os.Build;
 import android.credentials.selection.IntentCreationResult;
 import android.os.CancellationSignal;
-import android.os.IBinder;
-import android.os.ResultReceiver;
 import android.service.credentials.CallingAppInfo;
+import android.util.Log;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.annotation.RequiresApi;
 
 import org.luckypray.dexkit.DexKitBridge;
+import org.luckypray.dexkit.exceptions.NoResultException;
 import org.luckypray.dexkit.query.FindClass;
 import org.luckypray.dexkit.query.FindMethod;
 import org.luckypray.dexkit.query.matchers.ClassMatcher;
@@ -25,17 +26,14 @@ import org.luckypray.dexkit.query.matchers.MethodsMatcher;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.util.ArrayList;
 import java.util.Set;
+import java.util.concurrent.locks.ReentrantLock;
 
-import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedModule;
-import io.github.libxposed.api.annotations.AfterInvocation;
-import io.github.libxposed.api.annotations.BeforeInvocation;
-import io.github.libxposed.api.annotations.XposedHooker;
 
 @SuppressLint({"PrivateApi", "BlockedPrivateApi", "SoonBlockedPrivateApi"})
 public class PasskeyHook extends XposedModule {
+    private static final String TAG = "HyperPasskey";
     private static final String settingsPackageName = "com.android.settings";
     private static final String securityCenterPackageName = "com.miui.securitycenter";
     private static final String xiaomiScannerPackageName = "com.xiaomi.scanner";
@@ -43,25 +41,24 @@ public class PasskeyHook extends XposedModule {
     Class<?> cRequestSession;
     private static Field fIsInternationalBuildBoolean;
     private static Field fHybridService;
-    private static boolean originalIsInternationalBuild;
+    private final static Hooker isInternationalBuildHooker = new IsInternationalBuildHooker();
 
-    static {
+    @Override
+    public void onModuleLoaded(@NonNull ModuleLoadedParam param) {
+        module = this;
         System.loadLibrary("dexkit");
     }
 
-    public PasskeyHook(XposedInterface base, ModuleLoadedParam param) {
-        super(base, param);
-        module = this;
-    }
-
     @Override
-    public void onSystemServerLoaded(@NonNull SystemServerLoadedParam param) {
+    public void onSystemServerStarting(@NonNull SystemServerStartingParam param) {
         var classLoader = param.getClassLoader();
         try {
-            try {
-                hookIntentFactory(classLoader);
-            } catch (Exception e) {
-                log("hook IntentFactory failed", e);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+                try {
+                    hookIntentFactory(classLoader);
+                } catch (Exception e) {
+                    log(Log.ERROR, TAG, "hook IntentFactory failed", e);
+                }
             }
             try {
                 cRequestSession = classLoader.loadClass("com.android.server.credentials.RequestSession");
@@ -69,15 +66,15 @@ public class PasskeyHook extends XposedModule {
                 fHybridService.setAccessible(true);
                 hookRequestSession(classLoader);
             } catch (Exception e) {
-                log("hook RequestSession failed", e);
+                log(Log.ERROR, TAG, "hook RequestSession failed", e);
             }
         } catch (Throwable tr) {
-            log("Error hooking system service", tr);
+            log(Log.ERROR, TAG, "Error hooking system service", tr);
         }
     }
 
     @Override
-    public void onPackageLoaded(@NonNull PackageLoadedParam param) {
+    public void onPackageReady(@NonNull PackageReadyParam param) {
         if (!param.isFirstPackage()) return;
         var classLoader = param.getClassLoader();
         var pn = param.getPackageName();
@@ -85,33 +82,33 @@ public class PasskeyHook extends XposedModule {
             var buildClass = classLoader.loadClass("miui.os.Build");
             fIsInternationalBuildBoolean = buildClass.getDeclaredField("IS_INTERNATIONAL_BUILD");
             fIsInternationalBuildBoolean.setAccessible(true);
-            originalIsInternationalBuild = fIsInternationalBuildBoolean.getBoolean(null);
         } catch (Exception e) {
-            log("find IS_INTERNATIONAL_BUILD failed", e);
+            log(Log.ERROR, TAG, "find IS_INTERNATIONAL_BUILD failed", e);
         }
+        log(Log.DEBUG, TAG, "onPackageReady: " + pn);
         try (var bridge = DexKitBridge.create(classLoader, true)) {
             switch (pn) {
                 case settingsPackageName -> {
                     try {
                         hookDefaultCombinedPicker(classLoader);
                     } catch (Exception e) {
-                        log("hook DefaultCombinedPicker failed", e);
+                        log(Log.ERROR, TAG, "hook DefaultCombinedPicker failed", e);
                     }
                     try {
                         hookDefaultCombinedPreferenceController(classLoader);
                     } catch (Exception e) {
-                        log("hook DefaultCombinedPreferenceController failed", e);
+                        log(Log.ERROR, TAG, "hook DefaultCombinedPreferenceController failed", e);
                     }
                     try {
                         hookOnCombiPreferenceClickListener(classLoader, bridge);
                     } catch (Exception e) {
-                        log("hook OnCombiPreferenceClickListener failed", e);
+                        log(Log.ERROR, TAG, "hook OnCombiPreferenceClickListener failed", e);
                     }
                     if (Build.VERSION.SDK_INT == Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                         try {
                             hookDefaultAppPreferenceController(classLoader);
                         } catch (Exception e) {
-                            log("hook DefaultAppPreferenceController failed", e);
+                            log(Log.ERROR, TAG, "hook DefaultAppPreferenceController failed", e);
                         }
                     }
                 }
@@ -119,14 +116,14 @@ public class PasskeyHook extends XposedModule {
                     try {
                         securityCenterApplicationHook(classLoader, bridge);
                     } catch (Exception e) {
-                        log("hook SecurityCenterApplication failed", e);
+                        log(Log.ERROR, TAG, "hook SecurityCenterApplication failed", e);
                     }
                 }
                 case xiaomiScannerPackageName -> {
                     try {
                         hookMiFiDoBean(classLoader);
                     } catch (ClassNotFoundException e) {
-                        log("hook MiFiDoBean failed", e);
+                        log(Log.ERROR, TAG, "hook MiFiDoBean failed", e);
                     }
                 }
             }
@@ -138,7 +135,7 @@ public class PasskeyHook extends XposedModule {
         if (iClass != null) {
             try {
                 var aMethod = iClass.getDeclaredMethod("getAppPackageName");
-                hook(aMethod, GetAppPackageNameHooker.class);
+                hook(aMethod).intercept(chain -> "");
             } catch (NoSuchMethodException ignored) {
             }
         }
@@ -149,7 +146,7 @@ public class PasskeyHook extends XposedModule {
         if (iClass != null) {
             try {
                 var aMethod = iClass.getDeclaredMethod("getCombinedProviderInfos", CredentialManager.class, int.class);
-                hook(aMethod, IsInternationalBuildHooker.class);
+                hook(aMethod).intercept(isInternationalBuildHooker);
             } catch (NoSuchMethodException ignored) {
             }
         }
@@ -157,9 +154,9 @@ public class PasskeyHook extends XposedModule {
 
     private void hookDefaultAppPreferenceController(ClassLoader classLoader) throws ClassNotFoundException, NoSuchMethodException {
         var iClass = classLoader.loadClass("com.android.settings.applications.defaultapps.DefaultAppPreferenceController");
-        var PreferenceClass = classLoader.loadClass("androidx.preference.Preference");
-        var aMethod = iClass.getDeclaredMethod("updateState", PreferenceClass);
-        hook(aMethod, IsInternationalBuildHooker.class);
+        var preferenceClass = classLoader.loadClass("androidx.preference.Preference");
+        var aMethod = iClass.getDeclaredMethod("updateState", preferenceClass);
+        hook(aMethod).intercept(isInternationalBuildHooker);
     }
 
     private void hookDefaultCombinedPicker(ClassLoader classLoader) throws ClassNotFoundException {
@@ -167,7 +164,7 @@ public class PasskeyHook extends XposedModule {
         if (iClass != null) {
             try {
                 var aMethod = iClass.getDeclaredMethod("setDefaultKey", String.class);
-                hook(aMethod, IsInternationalBuildHooker.class);
+                hook(aMethod).intercept(isInternationalBuildHooker);
             } catch (NoSuchMethodException ignored) {
             }
         }
@@ -184,9 +181,9 @@ public class PasskeyHook extends XposedModule {
         ).findMethod(FindMethod.create().matcher(onLeftSideClickedMatcher)
         ).forEach(methodData -> {
             try {
-                hook(methodData.getMethodInstance(classLoader), IsInternationalBuildHooker.class);
+                hook(methodData.getMethodInstance(classLoader)).intercept(isInternationalBuildHooker);
             } catch (NoSuchMethodException e) {
-                log("hook onLeftSideClicked failed", e);
+                log(Log.ERROR, TAG, "hook onLeftSideClicked failed", e);
             }
         });
     }
@@ -203,29 +200,65 @@ public class PasskeyHook extends XposedModule {
                     Object.class, int.class, int.class, Object.class, Object.class, String.class,
                     CallingAppInfo.class, Set.class, CancellationSignal.class, long.class);
         }
-        hook(constructorRequestSession, RequestSessionHooker.class);
+        hook(constructorRequestSession).intercept(chain -> {
+            chain.proceed();
+            if (fHybridService != null) {
+                fHybridService.set(chain.getThisObject(), "com.google.android.gms/.auth.api.credentials.credman.service.RemoteService");
+            }
+            return null;
+        });
     }
 
+    @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
     private void hookIntentFactory(ClassLoader classLoader) throws NoSuchMethodException, ClassNotFoundException {
-        Class<?> classIntentFactory;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
-            Method mGetOemOverrideComponentName;
-            classIntentFactory = classLoader.loadClass("android.credentials.selection.IntentFactory");
-            var classIntentCreationResultBuilder = classLoader.loadClass("android.credentials.selection.IntentCreationResult$Builder");
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA) {
-                mGetOemOverrideComponentName = classIntentFactory.getDeclaredMethod("getOemOverrideComponentName", Context.class, classIntentCreationResultBuilder, int.class);
-            } else {
-                mGetOemOverrideComponentName = classIntentFactory.getDeclaredMethod("getOemOverrideComponentName", Context.class, classIntentCreationResultBuilder);
-            }
-            hook(mGetOemOverrideComponentName, GetOemOverrideComponentNameHooker.class);
+        Method mGetOemOverrideComponentName;
+        var classIntentFactory = classLoader.loadClass("android.credentials.selection.IntentFactory");
+        var classIntentCreationResultBuilder = classLoader.loadClass("android.credentials.selection.IntentCreationResult$Builder");
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA) {
+            mGetOemOverrideComponentName = classIntentFactory.getDeclaredMethod("getOemOverrideComponentName",
+                    Context.class, classIntentCreationResultBuilder, int.class);
         } else {
-            classIntentFactory = classLoader.loadClass("android.credentials.ui.IntentFactory");
-            var classRequestInfo = classLoader.loadClass("android.credentials.ui.RequestInfo");
-            var mCreateCredentialSelectorIntent = classIntentFactory.getDeclaredMethod("createCredentialSelectorIntent", classRequestInfo, ArrayList.class, ArrayList.class, ResultReceiver.class);
-            var mCreateCancelUiIntent = classIntentFactory.getDeclaredMethod("createCancelUiIntent", IBinder.class, boolean.class, String.class);
-            hook(mCreateCredentialSelectorIntent, GetOemOverrideComponentNameHooker.class);
-            hook(mCreateCancelUiIntent, GetOemOverrideComponentNameHooker.class);
+            mGetOemOverrideComponentName = classIntentFactory.getDeclaredMethod("getOemOverrideComponentName",
+                    Context.class, classIntentCreationResultBuilder);
         }
+        hook(mGetOemOverrideComponentName).intercept(chain -> {
+            var args = chain.getArgs();
+            if (args.size() >= 2 && args.get(0) instanceof Context context && args.get(1) instanceof IntentCreationResult.Builder intentResultBuilder) {
+                final String oemComponentString = "com.google.android.gms/.identitycredentials.ui.CredentialChooserActivity";
+                try {
+                    var oemComponentName = ComponentName.unflattenFromString(oemComponentString);
+                    if (oemComponentName != null) {
+                        try {
+                            var info = context.getPackageManager().getActivityInfo(oemComponentName,
+                                    PackageManager.ComponentInfoFlags.of(PackageManager.MATCH_SYSTEM_ONLY));
+                            boolean oemComponentEnabled = info.enabled;
+                            int runtimeComponentEnabledState = context.getPackageManager()
+                                    .getComponentEnabledSetting(oemComponentName);
+                            if (runtimeComponentEnabledState
+                                    == PackageManager.COMPONENT_ENABLED_STATE_ENABLED) {
+                                oemComponentEnabled = true;
+                            } else if (runtimeComponentEnabledState
+                                    == PackageManager.COMPONENT_ENABLED_STATE_DISABLED) {
+                                oemComponentEnabled = false;
+                            }
+                            if (oemComponentEnabled && info.exported) {
+                                intentResultBuilder.setOemUiPackageName(oemComponentName.getPackageName());
+                                intentResultBuilder.setOemUiUsageStatus(IntentCreationResult
+                                        .OemUiUsageStatus.SUCCESS);
+                                return oemComponentName;
+                            }
+                        } catch (PackageManager.NameNotFoundException e) {
+                            log(Log.ERROR, TAG, "Unable to find oem CredMan UI component: "
+                                    + oemComponentString + ".", e);
+                        }
+                    }
+                } catch (Exception e) {
+                    log(Log.ERROR, TAG, "Failed to parse OEM component name "
+                            + oemComponentString + ": " + e);
+                }
+            }
+            return chain.proceed();
+        });
     }
 
 
@@ -238,8 +271,7 @@ public class PasskeyHook extends XposedModule {
                                 .paramTypes(Context.class, String.class, int.class)
                                 .addInvoke("Landroid/content/res/Resources;->getString(I)Ljava/lang/String;")
                                 .addInvoke("Landroid/provider/Settings$Secure;->putString(Landroid/content/ContentResolver;Ljava/lang/String;Ljava/lang/String;)Z")
-                        )
-                ).single();
+                        )).single();
                 var setStringResourceConfigIfNeedMethodInstance = mSetStringResourceConfigIfNeed.getMethodInstance(classLoader);
                 deoptimize(setStringResourceConfigIfNeedMethodInstance);
                 var mConfigForAutofillService = cApplication.findMethod(FindMethod.create()
@@ -247,11 +279,10 @@ public class PasskeyHook extends XposedModule {
                                 .paramTypes(Context.class)
                                 .addEqString("autofill_service")
                                 .addInvoke(mSetStringResourceConfigIfNeed.getDescriptor())
-                        )
-                ).single().getMethodInstance(classLoader);
-                hook(mConfigForAutofillService, ReturnSkipHooker.class);
-            } catch (NoSuchMethodException e) {
-                module.log("hook configForAutofillService", e);
+                        )).single().getMethodInstance(classLoader);
+                hook(mConfigForAutofillService).intercept(chain -> null);
+            } catch (NoSuchMethodException | NoResultException e) {
+                log(Log.WARN, TAG, "hook configForAutofillService", e);
             }
             try {
                 var mSetStringArrayResourceConfigIfNeed = cApplication.findMethod(FindMethod.create()
@@ -259,8 +290,7 @@ public class PasskeyHook extends XposedModule {
                                 .paramTypes(Context.class, String.class, int.class)
                                 .addInvoke("Landroid/content/res/Resources;->getStringArray(I)[Ljava/lang/String;")
                                 .addInvoke("Landroid/provider/Settings$Secure;->putString(Landroid/content/ContentResolver;Ljava/lang/String;Ljava/lang/String;)Z")
-                        )
-                ).single();
+                        )).single();
                 var setStringArrayResourceConfigIfNeedMethodInstance = mSetStringArrayResourceConfigIfNeed.getMethodInstance(classLoader);
                 deoptimize(setStringArrayResourceConfigIfNeedMethodInstance);
                 var mSetDefaultConfigForAutofillAndCredentialManager = cApplication.findMethod(FindMethod.create()
@@ -268,105 +298,57 @@ public class PasskeyHook extends XposedModule {
                                 .paramTypes(Context.class)
                                 .usingEqStrings("credential_service", "credential_service_primary")
                                 .addInvoke(mSetStringArrayResourceConfigIfNeed.getDescriptor())
-                        )
-                ).single().getMethodInstance(classLoader);
-                hook(mSetDefaultConfigForAutofillAndCredentialManager, ReturnSkipHooker.class);
-            } catch (NoSuchMethodException e) {
-                module.log("hook setDefaultConfigForAutofillAndCredentialManager", e);
+                        )).single().getMethodInstance(classLoader);
+                hook(mSetDefaultConfigForAutofillAndCredentialManager).intercept(chain -> null);
+            } catch (NoSuchMethodException | NoResultException e) {
+                log(Log.ERROR, TAG, "hook setDefaultConfigForAutofillAndCredentialManager", e);
             }
         }
     }
 
-    @XposedHooker
-    private static class GetAppPackageNameHooker implements Hooker {
-        @BeforeInvocation
-        public static void before(@NonNull BeforeHookCallback callback) {
-            callback.returnAndSkip("");
-        }
-    }
-
-    @XposedHooker
-    private static class ReturnSkipHooker implements Hooker {
-        @BeforeInvocation
-        public static void before(@NonNull BeforeHookCallback callback) {
-            callback.returnAndSkip(null);
-        }
-    }
-
-    @XposedHooker
-    private static class RequestSessionHooker implements Hooker {
-        @AfterInvocation
-        public static void after(@NonNull AfterHookCallback callback) throws IllegalAccessException {
-            if (fHybridService != null) {
-                fHybridService.set(callback.getThisObject(), "com.google.android.gms/.auth.api.credentials.credman.service.RemoteService");
-            }
-        }
-    }
-
-    private static ComponentName getOemComponentName() {
-        ComponentName oemComponentName = null;
-        try {
-            oemComponentName = ComponentName.unflattenFromString(GetOemOverrideComponentNameHooker.oemComponentString);
-        } catch (Exception e) {
-            module.log("Failed to parse OEM component name " + GetOemOverrideComponentNameHooker.oemComponentString + ": " + e);
-        }
-        return oemComponentName;
-    }
-
-    @XposedHooker
-    private static class GetOemOverrideComponentNameHooker implements Hooker {
-        private static final String oemComponentString = "com.google.android.gms/.identitycredentials.ui.CredentialChooserActivity";
-
-        @BeforeInvocation
-        public static void before(@NonNull BeforeHookCallback callback) {
-            var args = callback.getArgs();
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM && args.length >= 2 && args[0] instanceof Context context && args[1] instanceof IntentCreationResult.Builder intentResultBuilder) {
-                ComponentName oemComponentName = getOemComponentName();
-                if (oemComponentName != null) {
-                    try {
-                        intentResultBuilder.setOemUiPackageName(oemComponentName.getPackageName());
-                        ActivityInfo info = context.getPackageManager().getActivityInfo(
-                                oemComponentName,
-                                PackageManager.ComponentInfoFlags.of(PackageManager.MATCH_SYSTEM_ONLY));
-                        boolean oemComponentEnabled = info.enabled;
-                        int runtimeComponentEnabledState = context.getPackageManager().getComponentEnabledSetting(oemComponentName);
-                        if (runtimeComponentEnabledState == PackageManager.COMPONENT_ENABLED_STATE_ENABLED) {
-                            oemComponentEnabled = true;
-                        } else if (runtimeComponentEnabledState == PackageManager.COMPONENT_ENABLED_STATE_DISABLED) {
-                            oemComponentEnabled = false;
-                        }
-                        if (oemComponentEnabled && info.exported) {
-                            intentResultBuilder.setOemUiUsageStatus(IntentCreationResult.OemUiUsageStatus.SUCCESS);
-                            callback.returnAndSkip(oemComponentName);
-                        } else {
-                            intentResultBuilder.setOemUiUsageStatus(IntentCreationResult.OemUiUsageStatus.OEM_UI_CONFIG_SPECIFIED_FOUND_BUT_NOT_ENABLED);
-                        }
-                    } catch (PackageManager.NameNotFoundException e) {
-                        intentResultBuilder.setOemUiUsageStatus(IntentCreationResult.OemUiUsageStatus.OEM_UI_CONFIG_SPECIFIED_BUT_NOT_FOUND);
-                        module.log("Unable to find oem CredMan UI component: " + oemComponentString + ".");
-                    }
-                } else {
-                    intentResultBuilder.setOemUiUsageStatus(IntentCreationResult.OemUiUsageStatus.OEM_UI_CONFIG_SPECIFIED_BUT_NOT_FOUND);
-                    module.log("Invalid OEM ComponentName format.");
-                }
-            }
-        }
-    }
-
-    @XposedHooker
     private static class IsInternationalBuildHooker implements Hooker {
-        @BeforeInvocation
-        public static void before(@NonNull BeforeHookCallback callback) throws IllegalAccessException {
-            if (fIsInternationalBuildBoolean != null) {
-                fIsInternationalBuildBoolean.setBoolean(null, true);
-            }
-        }
+        private static final ReentrantLock INTL_LOCK = new ReentrantLock(true); // fair optional
+        private static final ThreadLocal<Integer> DEPTH = ThreadLocal.withInitial(() -> 0);
+        private static final ThreadLocal<Boolean> PREV_VALUE = new ThreadLocal<>();
 
-        @AfterInvocation
-        public static void after(@NonNull AfterHookCallback callback) throws IllegalAccessException {
-            if (fIsInternationalBuildBoolean != null) {
-                fIsInternationalBuildBoolean.setBoolean(null, originalIsInternationalBuild);
+        @Nullable
+        @Override
+        public Object intercept(@NonNull Chain chain) throws Throwable {
+            if (fIsInternationalBuildBoolean == null) return chain.proceed();
+            INTL_LOCK.lock();
+
+            try {
+                Integer depthObj = DEPTH.get();
+                int depth = depthObj != null ? depthObj : 0;
+                if (depth == 0) {
+                    boolean prev = fIsInternationalBuildBoolean.getBoolean(null);
+                    PREV_VALUE.set(prev);
+                    if (!prev) {
+                        fIsInternationalBuildBoolean.setBoolean(null, true);
+                    }
+                }
+                DEPTH.set(depth + 1);
+
+                try {
+                    return chain.proceed();
+                } finally {
+                    Integer dObj = DEPTH.get();
+                    int d = (dObj != null ? dObj : 0) - 1;
+                    if (d == 0) {
+                        Boolean prev = PREV_VALUE.get();
+                        PREV_VALUE.remove();
+                        DEPTH.remove();
+                        if (prev != null) {
+                            fIsInternationalBuildBoolean.setBoolean(null, prev);
+                        }
+                    } else {
+                        DEPTH.set(d);
+                    }
+                }
+            } finally {
+                INTL_LOCK.unlock();
             }
+
         }
     }
 }
