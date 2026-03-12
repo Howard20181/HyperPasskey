@@ -223,7 +223,44 @@ public class PasskeyHook extends XposedModule {
             mGetOemOverrideComponentName = classIntentFactory.getDeclaredMethod("getOemOverrideComponentName",
                     Context.class, classIntentCreationResultBuilder);
         }
-        hook(mGetOemOverrideComponentName).intercept(new GetOemOverrideComponentNameHooker());
+        hook(mGetOemOverrideComponentName).intercept(chain -> {
+            var args = chain.getArgs();
+            if (args.size() >= 2 && args.get(0) instanceof Context context && args.get(1) instanceof IntentCreationResult.Builder intentResultBuilder) {
+                final String oemComponentString = "com.google.android.gms/.identitycredentials.ui.CredentialChooserActivity";
+                try {
+                    var oemComponentName = ComponentName.unflattenFromString(oemComponentString);
+                    if (oemComponentName != null) {
+                        try {
+                            var info = context.getPackageManager().getActivityInfo(oemComponentName,
+                                    PackageManager.ComponentInfoFlags.of(PackageManager.MATCH_SYSTEM_ONLY));
+                            boolean oemComponentEnabled = info.enabled;
+                            int runtimeComponentEnabledState = context.getPackageManager()
+                                    .getComponentEnabledSetting(oemComponentName);
+                            if (runtimeComponentEnabledState
+                                    == PackageManager.COMPONENT_ENABLED_STATE_ENABLED) {
+                                oemComponentEnabled = true;
+                            } else if (runtimeComponentEnabledState
+                                    == PackageManager.COMPONENT_ENABLED_STATE_DISABLED) {
+                                oemComponentEnabled = false;
+                            }
+                            if (oemComponentEnabled && info.exported) {
+                                intentResultBuilder.setOemUiPackageName(oemComponentName.getPackageName());
+                                intentResultBuilder.setOemUiUsageStatus(IntentCreationResult
+                                        .OemUiUsageStatus.SUCCESS);
+                                return oemComponentName;
+                            }
+                        } catch (PackageManager.NameNotFoundException e) {
+                            module.log(Log.ERROR, TAG, "Unable to find oem CredMan UI component: "
+                                    + oemComponentString + ".", e);
+                        }
+                    }
+                } catch (Exception e) {
+                    module.log(Log.ERROR, TAG, "Failed to parse OEM component name "
+                            + oemComponentString + ": " + e);
+                }
+            }
+            return chain.proceed();
+        });
     }
 
 
@@ -268,51 +305,6 @@ public class PasskeyHook extends XposedModule {
             } catch (NoSuchMethodException | NoResultException e) {
                 log(Log.ERROR, TAG, "hook setDefaultConfigForAutofillAndCredentialManager", e);
             }
-        }
-    }
-
-    @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
-    private static class GetOemOverrideComponentNameHooker implements Hooker {
-        private static final String oemComponentString = "com.google.android.gms/.identitycredentials.ui.CredentialChooserActivity";
-
-        @Override
-        public Object intercept(@NonNull Chain chain) throws Throwable {
-            var args = chain.getArgs();
-            if (args.size() >= 2 && args.get(0) instanceof Context context && args.get(1) instanceof IntentCreationResult.Builder intentResultBuilder) {
-                ComponentName oemComponentName;
-                try {
-                    oemComponentName = ComponentName.unflattenFromString(oemComponentString);
-                    if (oemComponentName != null) {
-                        try {
-                            var info = context.getPackageManager().getActivityInfo(oemComponentName,
-                                    PackageManager.ComponentInfoFlags.of(PackageManager.MATCH_SYSTEM_ONLY));
-                            boolean oemComponentEnabled = info.enabled;
-                            int runtimeComponentEnabledState = context.getPackageManager()
-                                    .getComponentEnabledSetting(oemComponentName);
-                            if (runtimeComponentEnabledState
-                                    == PackageManager.COMPONENT_ENABLED_STATE_ENABLED) {
-                                oemComponentEnabled = true;
-                            } else if (runtimeComponentEnabledState
-                                    == PackageManager.COMPONENT_ENABLED_STATE_DISABLED) {
-                                oemComponentEnabled = false;
-                            }
-                            if (oemComponentEnabled && info.exported) {
-                                intentResultBuilder.setOemUiPackageName(oemComponentName.getPackageName());
-                                intentResultBuilder.setOemUiUsageStatus(IntentCreationResult
-                                        .OemUiUsageStatus.SUCCESS);
-                                return oemComponentName;
-                            }
-                        } catch (PackageManager.NameNotFoundException e) {
-                            module.log(Log.ERROR, TAG, "Unable to find oem CredMan UI component: "
-                                    + oemComponentString + ".", e);
-                        }
-                    }
-                } catch (Exception e) {
-                    module.log(Log.ERROR, TAG, "Failed to parse OEM component name "
-                            + oemComponentString + ": " + e);
-                }
-            }
-            return chain.proceed();
         }
     }
 
