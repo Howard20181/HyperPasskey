@@ -314,9 +314,11 @@ public class PasskeyHook extends XposedModule {
         public Object intercept(@NonNull Chain chain) throws Throwable {
             if (fIsInternationalBuildBoolean != null) {
                 fIsInternationalBuildBoolean.setBoolean(null, true);
-                var proceed = chain.proceed();
-                fIsInternationalBuildBoolean.setBoolean(null, originalIsInternationalBuild);
-                return proceed;
+                try {
+                    return chain.proceed();
+                } finally {
+                    fIsInternationalBuildBoolean.setBoolean(null, originalIsInternationalBuild);
+                }
             }
             return chain.proceed();
         }
