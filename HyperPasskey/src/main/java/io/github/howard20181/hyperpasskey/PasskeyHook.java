@@ -27,6 +27,7 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.Set;
+import java.util.concurrent.locks.ReentrantLock;
 
 import io.github.libxposed.api.XposedModule;
 
@@ -40,7 +41,6 @@ public class PasskeyHook extends XposedModule {
     Class<?> cRequestSession;
     private static Field fIsInternationalBuildBoolean;
     private static Field fHybridService;
-    private static boolean originalIsInternationalBuild;
     private final static Hooker isInternationalBuildHooker = new IsInternationalBuildHooker();
 
     @Override
@@ -82,7 +82,6 @@ public class PasskeyHook extends XposedModule {
             var buildClass = classLoader.loadClass("miui.os.Build");
             fIsInternationalBuildBoolean = buildClass.getDeclaredField("IS_INTERNATIONAL_BUILD");
             fIsInternationalBuildBoolean.setAccessible(true);
-            originalIsInternationalBuild = fIsInternationalBuildBoolean.getBoolean(null);
         } catch (Exception e) {
             log(Log.ERROR, TAG, "find IS_INTERNATIONAL_BUILD failed", e);
         }
@@ -308,19 +307,48 @@ public class PasskeyHook extends XposedModule {
     }
 
     private static class IsInternationalBuildHooker implements Hooker {
+        private static final ReentrantLock INTL_LOCK = new ReentrantLock(true); // fair optional
+        private static final ThreadLocal<Integer> DEPTH = ThreadLocal.withInitial(() -> 0);
+        private static final ThreadLocal<Boolean> PREV_VALUE = new ThreadLocal<>();
 
         @Nullable
         @Override
         public Object intercept(@NonNull Chain chain) throws Throwable {
-            if (fIsInternationalBuildBoolean != null) {
-                fIsInternationalBuildBoolean.setBoolean(null, true);
+            if (fIsInternationalBuildBoolean == null) return chain.proceed();
+            INTL_LOCK.lock();
+
+            try {
+                Integer depthObj = DEPTH.get();
+                int depth = depthObj != null ? depthObj : 0;
+                if (depth == 0) {
+                    boolean prev = fIsInternationalBuildBoolean.getBoolean(null);
+                    PREV_VALUE.set(prev);
+                    if (!prev) {
+                        fIsInternationalBuildBoolean.setBoolean(null, true);
+                    }
+                }
+                DEPTH.set(depth + 1);
+
                 try {
                     return chain.proceed();
                 } finally {
-                    fIsInternationalBuildBoolean.setBoolean(null, originalIsInternationalBuild);
+                    Integer dObj = DEPTH.get();
+                    int d = (dObj != null ? dObj : 0) - 1;
+                    if (d == 0) {
+                        Boolean prev = PREV_VALUE.get();
+                        PREV_VALUE.remove();
+                        DEPTH.remove();
+                        if (prev != null) {
+                            fIsInternationalBuildBoolean.setBoolean(null, prev);
+                        }
+                    } else {
+                        DEPTH.set(d);
+                    }
                 }
+            } finally {
+                INTL_LOCK.unlock();
             }
-            return chain.proceed();
+
         }
     }
 }
