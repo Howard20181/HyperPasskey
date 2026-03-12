@@ -68,8 +68,7 @@ public class PasskeyHook extends XposedModule {
             } catch (Exception e) {
                 log(Log.ERROR, TAG, "hook RequestSession failed", e);
             }
-        } catch (
-                Throwable tr) {
+        } catch (Throwable tr) {
             log(Log.ERROR, TAG, "Error hooking system service", tr);
         }
     }
