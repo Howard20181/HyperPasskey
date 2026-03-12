@@ -248,12 +248,12 @@ public class PasskeyHook extends XposedModule {
                                 return oemComponentName;
                             }
                         } catch (PackageManager.NameNotFoundException e) {
-                            module.log(Log.ERROR, TAG, "Unable to find oem CredMan UI component: "
+                            log(Log.ERROR, TAG, "Unable to find oem CredMan UI component: "
                                     + oemComponentString + ".", e);
                         }
                     }
                 } catch (Exception e) {
-                    module.log(Log.ERROR, TAG, "Failed to parse OEM component name "
+                    log(Log.ERROR, TAG, "Failed to parse OEM component name "
                             + oemComponentString + ": " + e);
                 }
             }
