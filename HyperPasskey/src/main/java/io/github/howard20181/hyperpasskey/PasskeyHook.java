@@ -86,7 +86,7 @@ public class PasskeyHook extends XposedModule {
         } catch (Exception e) {
             log(Log.ERROR, TAG, "find IS_INTERNATIONAL_BUILD failed", e);
         }
-        log(Log.DEBUG, TAG, "onPackageLoaded: " + pn);
+        log(Log.DEBUG, TAG, "onPackageReady: " + pn);
         try (var bridge = DexKitBridge.create(classLoader, true)) {
             switch (pn) {
                 case settingsPackageName -> {
