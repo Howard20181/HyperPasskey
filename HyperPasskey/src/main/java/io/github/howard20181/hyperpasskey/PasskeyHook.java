@@ -37,15 +37,11 @@ public class PasskeyHook extends XposedModule {
     private static final String settingsPackageName = "com.android.settings";
     private static final String securityCenterPackageName = "com.miui.securitycenter";
     private static final String xiaomiScannerPackageName = "com.xiaomi.scanner";
-    private static XposedModule module;
-    Class<?> cRequestSession;
     private static Field fIsInternationalBuildBoolean;
-    private static Field fHybridService;
     private final static Hooker isInternationalBuildHooker = new IsInternationalBuildHooker();
 
     @Override
     public void onModuleLoaded(@NonNull ModuleLoadedParam param) {
-        module = this;
         System.loadLibrary("dexkit");
     }
 
@@ -61,9 +57,6 @@ public class PasskeyHook extends XposedModule {
                 }
             }
             try {
-                cRequestSession = classLoader.loadClass("com.android.server.credentials.RequestSession");
-                fHybridService = cRequestSession.getDeclaredField("mHybridService");
-                fHybridService.setAccessible(true);
                 hookRequestSession(classLoader);
             } catch (Exception e) {
                 log(Log.ERROR, TAG, "hook RequestSession failed", e);
@@ -85,7 +78,6 @@ public class PasskeyHook extends XposedModule {
         } catch (Exception e) {
             log(Log.ERROR, TAG, "find IS_INTERNATIONAL_BUILD failed", e);
         }
-        log(Log.DEBUG, TAG, "onPackageReady: " + pn);
         try (var bridge = DexKitBridge.create(classLoader, true)) {
             switch (pn) {
                 case settingsPackageName -> {
@@ -188,7 +180,10 @@ public class PasskeyHook extends XposedModule {
         });
     }
 
-    private void hookRequestSession(ClassLoader classLoader) throws NoSuchMethodException, ClassNotFoundException {
+    private void hookRequestSession(ClassLoader classLoader) throws NoSuchMethodException, ClassNotFoundException, NoSuchFieldException {
+        var cRequestSession = classLoader.loadClass("com.android.server.credentials.RequestSession");
+        var fHybridService = cRequestSession.getDeclaredField("mHybridService");
+        fHybridService.setAccessible(true);
         var aClass = classLoader.loadClass("com.android.server.credentials.RequestSession$SessionLifetime");
         Constructor<?> constructorRequestSession;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
@@ -202,9 +197,7 @@ public class PasskeyHook extends XposedModule {
         }
         hook(constructorRequestSession).intercept(chain -> {
             chain.proceed();
-            if (fHybridService != null) {
-                fHybridService.set(chain.getThisObject(), "com.google.android.gms/.auth.api.credentials.credman.service.RemoteService");
-            }
+            fHybridService.set(chain.getThisObject(), "com.google.android.gms/.auth.api.credentials.credman.service.RemoteService");
             return null;
         });
     }
