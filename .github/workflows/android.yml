@@ -39,7 +39,7 @@ jobs:
           fi
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v5
+        uses: gradle/actions/setup-gradle@v6
 
       - name: Build dependency
         working-directory: libxposed/api
