@@ -1,6 +1,7 @@
 package io.github.howard20181.hyperpasskey;
 
 import android.annotation.SuppressLint;
+import android.app.ActivityThread;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.pm.PackageManager;
@@ -15,17 +16,18 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.RequiresApi;
 
-import org.luckypray.dexkit.DexKitBridge;
+import org.luckypray.dexkit.DexKitCacheBridge;
 import org.luckypray.dexkit.exceptions.NoResultException;
-import org.luckypray.dexkit.query.FindClass;
 import org.luckypray.dexkit.query.FindMethod;
-import org.luckypray.dexkit.query.matchers.ClassMatcher;
 import org.luckypray.dexkit.query.matchers.MethodMatcher;
-import org.luckypray.dexkit.query.matchers.MethodsMatcher;
+import org.luckypray.dexkit.result.ClassData;
 
 import java.lang.reflect.Constructor;
+import java.lang.reflect.Executable;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -39,6 +41,25 @@ public class PasskeyHook extends XposedModule {
     private static final String xiaomiScannerPackageName = "com.xiaomi.scanner";
     private static Field fIsInternationalBuildBoolean;
     private final static Hooker isInternationalBuildHooker = new IsInternationalBuildHooker();
+    private Object[] param;
+    private static final int PARAM_PACKAGE_NAME = 0;
+    private static final int PARAM_CLASS_LOADER = 1;
+    private static final int PARAM_VERSION_NAME = 2;
+    private static final int PARAM_VERSION_CODE = 3;
+    private final Set<String> hookedIds = new HashSet<>();
+    private DexKitCacheBridge.RecyclableBridge bridge;
+
+    private HookBuilder hookE(Executable executable) {
+        var builder = hook(executable);
+
+        if (getApiVersion() >= 102) {
+            var id = executable.toGenericString();
+            builder.setId(id);
+            hookedIds.add(id);
+        }
+
+        return builder;
+    }
 
     @Override
     public void onModuleLoaded(@NonNull ModuleLoadedParam param) {
@@ -48,6 +69,16 @@ public class PasskeyHook extends XposedModule {
     @Override
     public void onSystemServerStarting(@NonNull SystemServerStartingParam param) {
         var classLoader = param.getClassLoader();
+        this.param = new Object[]{
+                "system",
+                classLoader,
+                "",
+                (long) 0
+        };
+        hookSystemServer(classLoader);
+    }
+
+    private void hookSystemServer(ClassLoader classLoader) {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
                 try {
@@ -70,7 +101,8 @@ public class PasskeyHook extends XposedModule {
     public void onPackageReady(@NonNull PackageReadyParam param) {
         if (!param.isFirstPackage()) return;
         var classLoader = param.getClassLoader();
-        var pn = param.getPackageName();
+        var packageName = param.getPackageName();
+        var pm = ActivityThread.currentApplication().getPackageManager();
         try {
             var buildClass = classLoader.loadClass("miui.os.Build");
             fIsInternationalBuildBoolean = buildClass.getDeclaredField("IS_INTERNATIONAL_BUILD");
@@ -78,48 +110,113 @@ public class PasskeyHook extends XposedModule {
         } catch (Exception e) {
             log(Log.ERROR, TAG, "find IS_INTERNATIONAL_BUILD failed", e);
         }
-        try (var bridge = DexKitBridge.create(classLoader, true)) {
-            switch (pn) {
-                case settingsPackageName -> {
-                    try {
-                        hookDefaultCombinedPicker(classLoader);
-                    } catch (Exception e) {
-                        log(Log.ERROR, TAG, "hook DefaultCombinedPicker failed", e);
-                    }
-                    try {
-                        hookDefaultCombinedPreferenceController(classLoader);
-                    } catch (Exception e) {
-                        log(Log.ERROR, TAG, "hook DefaultCombinedPreferenceController failed", e);
-                    }
-                    try {
-                        hookOnCombiPreferenceClickListener(classLoader, bridge);
-                    } catch (Exception e) {
-                        log(Log.ERROR, TAG, "hook OnCombiPreferenceClickListener failed", e);
-                    }
-                    if (Build.VERSION.SDK_INT == Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                        try {
-                            hookDefaultAppPreferenceController(classLoader);
-                        } catch (Exception e) {
-                            log(Log.ERROR, TAG, "hook DefaultAppPreferenceController failed", e);
-                        }
-                    }
+        DexKitCacheBridge.init(MemoryCache.INSTANCE);
+        long versionCode = 0;
+        String versionName = "";
+        try {
+            var info = pm.getPackageInfo(packageName, 0);
+            versionCode = info.getLongVersionCode();
+            versionName = info.versionName;
+        } catch (PackageManager.NameNotFoundException ignored) {
+        }
+        var appTag = packageName + ":" + versionName + "-" + versionCode;
+        this.param = new Object[]{
+                packageName,
+                classLoader,
+                versionName,
+                versionCode
+        };
+        log(Log.DEBUG, TAG, "create DexKitCacheBridge for " + appTag);
+        try (var bridge = DexKitCacheBridge.create(appTag, classLoader)) {
+            hookPackage(packageName, classLoader, bridge);
+            this.bridge = bridge;
+        }
+    }
+
+    private void hookPackage(String packageName, ClassLoader classLoader, DexKitCacheBridge.RecyclableBridge bridge) {
+        switch (packageName) {
+            case settingsPackageName -> {
+                try {
+                    hookDefaultCombinedPicker(classLoader);
+                } catch (Exception e) {
+                    log(Log.ERROR, TAG, "hook DefaultCombinedPicker failed", e);
                 }
-                case securityCenterPackageName -> {
-                    try {
-                        securityCenterApplicationHook(classLoader, bridge);
-                    } catch (Exception e) {
-                        log(Log.ERROR, TAG, "hook SecurityCenterApplication failed", e);
-                    }
+                try {
+                    hookDefaultCombinedPreferenceController(classLoader);
+                } catch (Exception e) {
+                    log(Log.ERROR, TAG, "hook DefaultCombinedPreferenceController failed", e);
                 }
-                case xiaomiScannerPackageName -> {
+                try {
+                    hookOnCombiPreferenceClickListener(classLoader, bridge);
+                } catch (Exception e) {
+                    log(Log.ERROR, TAG, "hook OnCombiPreferenceClickListener failed", e);
+                }
+                if (Build.VERSION.SDK_INT == Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                     try {
-                        hookMiFiDoBean(classLoader);
-                    } catch (ClassNotFoundException e) {
-                        log(Log.ERROR, TAG, "hook MiFiDoBean failed", e);
+                        hookDefaultAppPreferenceController(classLoader);
+                    } catch (Exception e) {
+                        log(Log.ERROR, TAG, "hook DefaultAppPreferenceController failed", e);
                     }
                 }
             }
+            case securityCenterPackageName -> {
+                try {
+                    securityCenterApplicationhookE(classLoader, bridge);
+                } catch (Exception e) {
+                    log(Log.ERROR, TAG, "hook SecurityCenterApplication failed", e);
+                }
+            }
+            case xiaomiScannerPackageName -> {
+                try {
+                    hookMiFiDoBean(classLoader);
+                } catch (ClassNotFoundException e) {
+                    log(Log.ERROR, TAG, "hook MiFiDoBean failed", e);
+                }
+            }
         }
+    }
+
+    @Override
+    public boolean onHotReloading(@NonNull HotReloadingParam param) {
+        param.setSavedInstanceState(this.param);
+        this.bridge.destroy();
+        return true;
+    }
+
+    @Override
+    public void onHotReloaded(@NonNull HotReloadedParam param) {
+        var isSystemServer = param.isSystemServer();
+        if (param.getSavedInstanceState() instanceof Object[] outState
+                && outState[PARAM_PACKAGE_NAME] instanceof String packageName
+                && outState[PARAM_CLASS_LOADER] instanceof ClassLoader classLoader
+                && outState[PARAM_VERSION_NAME] instanceof String versionName
+                && outState[PARAM_VERSION_CODE] instanceof Long versionCode) {
+            this.param = new Object[]{
+                    packageName,
+                    classLoader,
+                    versionName,
+                    versionCode
+            };
+            try {
+                if (isSystemServer) {
+                    hookSystemServer(classLoader);
+                } else {
+                    var appTag = packageName + ":" + versionName + "-" + versionCode;
+                    log(Log.DEBUG, TAG, "create DexKitCacheBridge for " + appTag);
+                    try (var bridge = DexKitCacheBridge.create(appTag, classLoader)) {
+                        hookPackage(packageName, classLoader, bridge);
+                        this.bridge = bridge;
+                    }
+                }
+            } catch (Throwable tr) {
+                log(Log.ERROR, TAG, "Hot reload failed", tr);
+            }
+        }
+        param.getOldHookHandles().forEach(h -> {
+            if (!hookedIds.contains(h.getId())) {
+                h.unhook();
+            }
+        });
     }
 
     private void hookMiFiDoBean(ClassLoader classLoader) throws ClassNotFoundException {
@@ -127,7 +224,7 @@ public class PasskeyHook extends XposedModule {
         if (iClass != null) {
             try {
                 var aMethod = iClass.getDeclaredMethod("getAppPackageName");
-                hook(aMethod).intercept(chain -> "");
+                hookE(aMethod).intercept(chain -> "");
             } catch (NoSuchMethodException ignored) {
             }
         }
@@ -138,7 +235,7 @@ public class PasskeyHook extends XposedModule {
         if (iClass != null) {
             try {
                 var aMethod = iClass.getDeclaredMethod("getCombinedProviderInfos", CredentialManager.class, int.class);
-                hook(aMethod).intercept(isInternationalBuildHooker);
+                hookE(aMethod).intercept(isInternationalBuildHooker);
             } catch (NoSuchMethodException ignored) {
             }
         }
@@ -148,7 +245,7 @@ public class PasskeyHook extends XposedModule {
         var iClass = classLoader.loadClass("com.android.settings.applications.defaultapps.DefaultAppPreferenceController");
         var preferenceClass = classLoader.loadClass("androidx.preference.Preference");
         var aMethod = iClass.getDeclaredMethod("updateState", preferenceClass);
-        hook(aMethod).intercept(isInternationalBuildHooker);
+        hookE(aMethod).intercept(isInternationalBuildHooker);
     }
 
     private void hookDefaultCombinedPicker(ClassLoader classLoader) throws ClassNotFoundException {
@@ -156,24 +253,23 @@ public class PasskeyHook extends XposedModule {
         if (iClass != null) {
             try {
                 var aMethod = iClass.getDeclaredMethod("setDefaultKey", String.class);
-                hook(aMethod).intercept(isInternationalBuildHooker);
+                hookE(aMethod).intercept(isInternationalBuildHooker);
             } catch (NoSuchMethodException ignored) {
             }
         }
     }
 
-    private void hookOnCombiPreferenceClickListener(ClassLoader classLoader, DexKitBridge bridge) {
+    private void hookOnCombiPreferenceClickListener(ClassLoader classLoader, DexKitCacheBridge.RecyclableBridge bridge) {
         var onLeftSideClickedMatcher = MethodMatcher.create()
                 .name("onLeftSideClicked")
                 .paramCount(0)
                 .addInvoke("Lcom/android/settings/applications/credentials/CombinedProviderInfo;->launchSettingsActivityIntent(Landroid/content/Context;Ljava/lang/CharSequence;Ljava/lang/CharSequence;I)V");
-        bridge.findClass(FindClass.create()
+        bridge.getMethods(FindMethod.create()
                 .searchPackages("com.android.settings.applications.credentials")
-                .matcher(ClassMatcher.create().methods(MethodsMatcher.create().add(onLeftSideClickedMatcher)))
-        ).findMethod(FindMethod.create().matcher(onLeftSideClickedMatcher)
+                .matcher(onLeftSideClickedMatcher)
         ).forEach(methodData -> {
             try {
-                hook(methodData.getMethodInstance(classLoader)).intercept(isInternationalBuildHooker);
+                hookE(methodData.getMethodInstance(classLoader)).intercept(isInternationalBuildHooker);
             } catch (NoSuchMethodException e) {
                 log(Log.ERROR, TAG, "hook onLeftSideClicked failed", e);
             }
@@ -195,7 +291,7 @@ public class PasskeyHook extends XposedModule {
                     Object.class, int.class, int.class, Object.class, Object.class, String.class,
                     CallingAppInfo.class, Set.class, CancellationSignal.class, long.class);
         }
-        hook(constructorRequestSession).intercept(chain -> {
+        hookE(constructorRequestSession).intercept(chain -> {
             chain.proceed();
             fHybridService.set(chain.getThisObject(), "com.google.android.gms/.auth.api.credentials.credman.service.RemoteService");
             return null;
@@ -214,7 +310,7 @@ public class PasskeyHook extends XposedModule {
             mGetOemOverrideComponentName = classIntentFactory.getDeclaredMethod("getOemOverrideComponentName",
                     Context.class, classIntentCreationResultBuilder);
         }
-        hook(mGetOemOverrideComponentName).intercept(chain -> {
+        hookE(mGetOemOverrideComponentName).intercept(chain -> {
             var args = chain.getArgs();
             if (args.size() >= 2 && args.get(0) instanceof Context context && args.get(1) instanceof IntentCreationResult.Builder intentResultBuilder) {
                 final String oemComponentString = "com.google.android.gms/.identitycredentials.ui.CredentialChooserActivity";
@@ -255,47 +351,59 @@ public class PasskeyHook extends XposedModule {
     }
 
 
-    private void securityCenterApplicationHook(ClassLoader classLoader, DexKitBridge bridge) {
-        var cApplication = bridge.getClassData("Lcom/miui/securitycenter/Application;");
-        if (cApplication != null) {
-            try {
-                var mSetStringResourceConfigIfNeed = cApplication.findMethod(FindMethod.create()
-                        .matcher(MethodMatcher.create()
-                                .paramTypes(Context.class, String.class, int.class)
-                                .addInvoke("Landroid/content/res/Resources;->getString(I)Ljava/lang/String;")
-                                .addInvoke("Landroid/provider/Settings$Secure;->putString(Landroid/content/ContentResolver;Ljava/lang/String;Ljava/lang/String;)Z")
-                        )).single();
-                var setStringResourceConfigIfNeedMethodInstance = mSetStringResourceConfigIfNeed.getMethodInstance(classLoader);
-                deoptimize(setStringResourceConfigIfNeedMethodInstance);
-                var mConfigForAutofillService = cApplication.findMethod(FindMethod.create()
-                        .matcher(MethodMatcher.create()
-                                .paramTypes(Context.class)
-                                .addEqString("autofill_service")
-                                .addInvoke(mSetStringResourceConfigIfNeed.getDescriptor())
-                        )).single().getMethodInstance(classLoader);
-                hook(mConfigForAutofillService).intercept(chain -> null);
-            } catch (NoSuchMethodException | NoResultException e) {
-                log(Log.WARN, TAG, "hook configForAutofillService", e);
-            }
-            try {
-                var mSetStringArrayResourceConfigIfNeed = cApplication.findMethod(FindMethod.create()
-                        .matcher(MethodMatcher.create()
-                                .paramTypes(Context.class, String.class, int.class)
-                                .addInvoke("Landroid/content/res/Resources;->getStringArray(I)[Ljava/lang/String;")
-                                .addInvoke("Landroid/provider/Settings$Secure;->putString(Landroid/content/ContentResolver;Ljava/lang/String;Ljava/lang/String;)Z")
-                        )).single();
-                var setStringArrayResourceConfigIfNeedMethodInstance = mSetStringArrayResourceConfigIfNeed.getMethodInstance(classLoader);
-                deoptimize(setStringArrayResourceConfigIfNeedMethodInstance);
-                var mSetDefaultConfigForAutofillAndCredentialManager = cApplication.findMethod(FindMethod.create()
-                        .matcher(MethodMatcher.create()
-                                .paramTypes(Context.class)
-                                .usingEqStrings("credential_service", "credential_service_primary")
-                                .addInvoke(mSetStringArrayResourceConfigIfNeed.getDescriptor())
-                        )).single().getMethodInstance(classLoader);
-                hook(mSetDefaultConfigForAutofillAndCredentialManager).intercept(chain -> null);
-            } catch (NoSuchMethodException | NoResultException e) {
-                log(Log.ERROR, TAG, "hook setDefaultConfigForAutofillAndCredentialManager", e);
-            }
+    private void securityCenterApplicationhookE(ClassLoader classLoader, DexKitCacheBridge.RecyclableBridge bridge) {
+        var classDataList = new ArrayList<ClassData>();
+        bridge.withBridge(rawBridge -> {
+            var classData = rawBridge.getClassData("Lcom/miui/securitycenter/Application;");
+            if (classData != null)
+                classDataList.add(classData);
+            classData = rawBridge.getClassData("Lcom/miui/securitycenter/service/CacheService;");
+            if (classData != null)
+                classDataList.add(classData);
+        });
+        try {
+            var mSetStringResourceConfigIfNeed = bridge.getMethod(FindMethod.create()
+                    .searchInClass(classDataList)
+                    .matcher(MethodMatcher.create()
+                            .addParamType(String.class)
+                            .addParamType(int.class)
+                            .addInvoke("Landroid/content/res/Resources;->getString(I)Ljava/lang/String;")
+                            .addInvoke("Landroid/provider/Settings$Secure;->putString(Landroid/content/ContentResolver;Ljava/lang/String;Ljava/lang/String;)Z")
+                    ));
+            var setStringResourceConfigIfNeedMethodInstance = mSetStringResourceConfigIfNeed.getMethodInstance(classLoader);
+            deoptimize(setStringResourceConfigIfNeedMethodInstance);
+            var mConfigForAutofillService = bridge.getMethod(FindMethod.create()
+                    .searchInClass(classDataList)
+                    .matcher(MethodMatcher.create()
+                            .addEqString("autofill_service")
+                            .addInvoke(mSetStringResourceConfigIfNeed.toString())
+                    )).getMethodInstance(classLoader);
+            hookE(mConfigForAutofillService).intercept(chain -> null);
+        } catch (NoSuchMethodException e) {
+            log(Log.WARN, TAG, "hook configForAutofillService", e);
+        } catch (NoResultException ignore) {
+        }
+        try {
+            var mSetStringArrayResourceConfigIfNeed = bridge.getMethod(FindMethod.create()
+                    .searchInClass(classDataList)
+                    .matcher(MethodMatcher.create()
+                            .addParamType(String.class)
+                            .addParamType(int.class)
+                            .addInvoke("Landroid/content/res/Resources;->getStringArray(I)[Ljava/lang/String;")
+                            .addInvoke("Landroid/provider/Settings$Secure;->putString(Landroid/content/ContentResolver;Ljava/lang/String;Ljava/lang/String;)Z")
+                    ));
+            var setStringArrayResourceConfigIfNeedMethodInstance = mSetStringArrayResourceConfigIfNeed.getMethodInstance(classLoader);
+            deoptimize(setStringArrayResourceConfigIfNeedMethodInstance);
+            var mSetDefaultConfigForAutofillAndCredentialManager = bridge.getMethod(FindMethod.create()
+                    .searchInClass(classDataList)
+                    .matcher(MethodMatcher.create()
+                            .usingEqStrings("credential_service", "credential_service_primary")
+                            .addInvoke(mSetStringArrayResourceConfigIfNeed.toString())
+                    )).getMethodInstance(classLoader);
+            hookE(mSetDefaultConfigForAutofillAndCredentialManager).intercept(chain -> null);
+        } catch (NoSuchMethodException e) {
+            log(Log.ERROR, TAG, "hook setDefaultConfigForAutofillAndCredentialManager", e);
+        } catch (NoResultException ignore) {
         }
     }
 

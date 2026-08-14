@@ -3,12 +3,12 @@ plugins {
 }
 
 android {
-    compileSdkVersion 36
+    compileSdkVersion 37
 
     defaultConfig {
         applicationId namespace
         minSdkVersion 34
-        targetSdkVersion 36
+        targetSdkVersion 37
         versionCode rootProject.ext.commitCount
         versionName "1.4.0"
         ndk {
@@ -76,16 +76,15 @@ android {
 
 
     dependenciesInfo.includeInApk false
-    enableKotlin = false
     namespace 'io.github.howard20181.hyperpasskey'
 }
 base {
     archivesName = project.name + "-" + android.defaultConfig.versionName + "." + android.defaultConfig.versionCode
 }
 dependencies {
-    implementation "androidx.annotation:annotation:1.9.1"
-    compileOnly 'io.github.libxposed:api:101.0.0'
-    implementation 'org.luckypray:dexkit:2.0.7'
+    implementation "androidx.annotation:annotation:1.10.0"
+    compileOnly 'io.github.libxposed:api:102.0.0'
+    implementation 'org.luckypray:dexkit:2.2.0'
     compileOnly project(":hiddenapi:stubs")
     implementation project(":hiddenapi:bridge")
 }
