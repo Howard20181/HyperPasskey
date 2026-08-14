@@ -184,9 +184,12 @@ public class PasskeyHook extends XposedModule {
 
     @Override
     public boolean onHotReloading(@NonNull HotReloadingParam param) {
-        param.setSavedInstanceState(this.param);
-        this.bridge.destroy();
-        return true;
+param.setSavedInstanceState(this.param);
+if (this.bridge != null) {
+    this.bridge.destroy();
+    this.bridge = null;
+}
+return true;
     }
 
     @Override
