@@ -2,15 +2,21 @@ package bridge;
 
 import android.annotation.NonNull;
 import android.app.Notification;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.pm.ApplicationInfo;
+import android.content.pm.ComponentInfo;
 import android.content.pm.PackageManager;
 import android.content.res.Resources;
+import android.credentials.CredentialManager;
+import android.credentials.CredentialProviderInfo;
 import android.graphics.Bitmap;
 import android.graphics.drawable.Icon;
 import android.net.Uri;
 import android.os.UserHandle;
 import android.service.notification.StatusBarNotification;
+
+import java.util.List;
 
 public class HiddenApiBridge {
     public static Context StatusBarNotification_getPackageContext(@NonNull StatusBarNotification sbn, @NonNull Context systenUiContext) {
@@ -73,5 +79,15 @@ public class HiddenApiBridge {
     public static Context Context_createApplicationContext(Context context, ApplicationInfo application,
                                                            int flags) {
         return context.createApplicationContext(application, flags);
+    }
+
+    public static List<CredentialProviderInfo> CredentialManager_getCredentialProviderServices(CredentialManager credentialManager,
+                                                                                               int userId, int providerFilter) {
+        return credentialManager.getCredentialProviderServices(userId, providerFilter);
+    }
+
+    public static ComponentName ComponentInfo_getComponentName(ComponentInfo componentInfo) {
+        return componentInfo.getComponentName();
+
     }
 }

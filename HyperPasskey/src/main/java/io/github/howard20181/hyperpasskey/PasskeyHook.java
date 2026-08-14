@@ -6,6 +6,7 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.credentials.CredentialManager;
+import android.credentials.CredentialProviderInfo;
 import android.os.Build;
 import android.credentials.selection.IntentCreationResult;
 import android.os.CancellationSignal;
@@ -15,6 +16,8 @@ import android.util.Log;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.RequiresApi;
+
+import com.android.settings.applications.credentials.CombinedProviderInfo;
 
 import org.luckypray.dexkit.DexKitCacheBridge;
 import org.luckypray.dexkit.exceptions.NoResultException;
@@ -28,9 +31,12 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
 
+import bridge.HiddenApiBridge;
 import io.github.libxposed.api.XposedModule;
 
 @SuppressLint({"PrivateApi", "BlockedPrivateApi", "SoonBlockedPrivateApi"})
@@ -235,7 +241,12 @@ public class PasskeyHook extends XposedModule {
         if (iClass != null) {
             try {
                 var aMethod = iClass.getDeclaredMethod("getCombinedProviderInfos", CredentialManager.class, int.class);
-                hookE(aMethod).intercept(isInternationalBuildHooker);
+                hookE(aMethod).intercept(chain -> {
+                    if (chain.getArg(0) instanceof CredentialManager credentialManager && chain.getArg(1) instanceof Integer userId) {
+                        return HiddenApiBridge.CredentialManager_getCredentialProviderServices(credentialManager, userId, 3/* CredentialManager.PROVIDER_FILTER_USER_PROVIDERS_INCLUDING_HIDDEN */);
+                    }
+                    return chain.proceed();
+                });
             } catch (NoSuchMethodException ignored) {
             }
         }
@@ -251,10 +262,46 @@ public class PasskeyHook extends XposedModule {
     private void hookDefaultCombinedPicker(ClassLoader classLoader) throws ClassNotFoundException {
         var iClass = classLoader.loadClass("com.android.settings.applications.credentials.DefaultCombinedPicker");
         if (iClass != null) {
+            AtomicReference<String> key = new AtomicReference<>();
             try {
                 var aMethod = iClass.getDeclaredMethod("setDefaultKey", String.class);
-                hookE(aMethod).intercept(isInternationalBuildHooker);
+//                hookE(aMethod).intercept(isInternationalBuildHooker);
+                hookE(aMethod).intercept(chain -> {
+                    if (chain.getArg(0) instanceof String inputKey) {
+                        key.set(inputKey);
+                    }
+                    return chain.proceed();
+                });
             } catch (NoSuchMethodException ignored) {
+            }
+            try {
+                var setProviders = iClass.getDeclaredMethod("setProviders", String.class, List.class);
+                var getAllProviders = iClass.getDeclaredMethod("getAllProviders", int.class);
+                var getUser = iClass.getDeclaredMethod("getUser");
+                hookE(setProviders).intercept(chain -> {
+                    if (chain.getArg(0) instanceof String autofillProvider) {
+                        // Get the list of providers and see if any match the key (package name).
+                        final List<CombinedProviderInfo> allProviders = (List<CombinedProviderInfo>) getInvoker(getAllProviders).invoke(chain.getThisObject(), getInvoker(getUser).invoke(chain.getThisObject()));
+                        CombinedProviderInfo matchedProvider = null;
+                        for (CombinedProviderInfo cpi : allProviders) {
+                            if (cpi.getApplicationInfo().packageName.equals(key.get())) {
+                                matchedProvider = cpi;
+                                break;
+                            }
+                        }
+                        if (matchedProvider != null) {
+                            // Get the component names and save them.
+                            final List<String> credManComponents = new ArrayList<>();
+                            for (CredentialProviderInfo pi : matchedProvider.getCredentialProviderInfos()) {
+                                credManComponents.add(HiddenApiBridge.ComponentInfo_getComponentName(pi.getServiceInfo()).flattenToString());
+                            }
+                            return chain.proceed(new Object[]{autofillProvider, credManComponents});
+                        }
+                    }
+                    return chain.proceed();
+                });
+            } catch (NoSuchMethodException e) {
+                log(Log.ERROR, TAG, "hook setProviders failed", e);
             }
         }
     }
