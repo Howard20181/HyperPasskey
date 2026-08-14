@@ -166,9 +166,9 @@ public class PasskeyHook extends XposedModule {
                 }
             }
             case securityCenterPackageName -> {
-                try {
-                    securityCenterApplicationhookE(classLoader, bridge);
-                } catch (Exception e) {
+try {
+    securityCenterApplicationHookE(classLoader, bridge);
+} catch (Exception e) {
                     log(Log.ERROR, TAG, "hook SecurityCenterApplication failed", e);
                 }
             }
