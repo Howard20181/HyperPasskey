@@ -401,7 +401,7 @@ return true;
     }
 
 
-    private void securityCenterApplicationhook(ClassLoader classLoader, DexKitCacheBridge.RecyclableBridge bridge) {
+    private void securityCenterApplicationHook(ClassLoader classLoader, DexKitCacheBridge.RecyclableBridge bridge) {
         var classDataList = new ArrayList<ClassData>();
         bridge.withBridge(rawBridge -> {
             var classData = rawBridge.getClassData("Lcom/miui/securitycenter/Application;");
