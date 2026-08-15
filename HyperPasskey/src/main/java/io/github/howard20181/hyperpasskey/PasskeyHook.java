@@ -108,7 +108,8 @@ public class PasskeyHook extends XposedModule {
         if (!param.isFirstPackage()) return;
         var classLoader = param.getClassLoader();
         var packageName = param.getPackageName();
-        var pm = ActivityThread.currentApplication().getPackageManager();
+        Context ctx = ActivityThread.currentActivityThread().getSystemContext();
+        var pm = ctx.getPackageManager();
         try {
             var buildClass = classLoader.loadClass("miui.os.Build");
             fIsInternationalBuildBoolean = buildClass.getDeclaredField("IS_INTERNATIONAL_BUILD");
@@ -166,9 +167,9 @@ public class PasskeyHook extends XposedModule {
                 }
             }
             case securityCenterPackageName -> {
-try {
-    securityCenterApplicationHook(classLoader, bridge);
-} catch (Exception e) {
+                try {
+                    securityCenterHook(classLoader, bridge);
+                } catch (Exception e) {
                     log(Log.ERROR, TAG, "hook SecurityCenterApplication failed", e);
                 }
             }
@@ -184,12 +185,12 @@ try {
 
     @Override
     public boolean onHotReloading(@NonNull HotReloadingParam param) {
-param.setSavedInstanceState(this.param);
-if (this.bridge != null) {
-    this.bridge.destroy();
-    this.bridge = null;
-}
-return true;
+        param.setSavedInstanceState(this.param);
+        if (this.bridge != null) {
+            this.bridge.destroy();
+            this.bridge = null;
+        }
+        return true;
     }
 
     @Override
@@ -210,6 +211,8 @@ return true;
                 if (isSystemServer) {
                     hookSystemServer(classLoader);
                 } else {
+                    System.loadLibrary("dexkit");
+                    DexKitCacheBridge.init(MemoryCache.INSTANCE);
                     var appTag = packageName + ":" + versionName + "-" + versionCode;
                     log(Log.DEBUG, TAG, "create DexKitCacheBridge for " + appTag);
                     try (var bridge = DexKitCacheBridge.create(appTag, classLoader)) {
@@ -318,6 +321,7 @@ return true;
                 .searchPackages("com.android.settings.applications.credentials")
                 .matcher(onLeftSideClickedMatcher)
         ).forEach(methodData -> {
+            log(Log.DEBUG, TAG, "onLeftSideClicked -> " + methodData);
             try {
                 hookE(methodData.getMethodInstance(classLoader)).intercept(isInternationalBuildHooker);
             } catch (NoSuchMethodException e) {
@@ -401,7 +405,7 @@ return true;
     }
 
 
-    private void securityCenterApplicationHook(ClassLoader classLoader, DexKitCacheBridge.RecyclableBridge bridge) {
+    private void securityCenterHook(ClassLoader classLoader, DexKitCacheBridge.RecyclableBridge bridge) {
         var classDataList = new ArrayList<ClassData>();
         bridge.withBridge(rawBridge -> {
             var classData = rawBridge.getClassData("Lcom/miui/securitycenter/Application;");
@@ -411,15 +415,20 @@ return true;
             if (classData != null)
                 classDataList.add(classData);
         });
+        log(Log.DEBUG, TAG, "search in " + classDataList);
         try {
             var mSetStringResourceConfigIfNeed = bridge.getMethod(FindMethod.create()
                     .searchInClass(classDataList)
                     .matcher(MethodMatcher.create()
-                            .addParamType(String.class)
-                            .addParamType(int.class)
+                            .anyOf(
+                                    MethodMatcher.create()
+                                            .paramTypes(Context.class, String.class, int.class),
+                                    MethodMatcher.create()
+                                            .paramTypes(String.class, int.class))
                             .addInvoke("Landroid/content/res/Resources;->getString(I)Ljava/lang/String;")
                             .addInvoke("Landroid/provider/Settings$Secure;->putString(Landroid/content/ContentResolver;Ljava/lang/String;Ljava/lang/String;)Z")
                     ));
+            log(Log.DEBUG, TAG, "setStringResourceConfigIfNeed -> " + mSetStringResourceConfigIfNeed);
             var setStringResourceConfigIfNeedMethodInstance = mSetStringResourceConfigIfNeed.getMethodInstance(classLoader);
             deoptimize(setStringResourceConfigIfNeedMethodInstance);
             var mConfigForAutofillService = bridge.getMethod(FindMethod.create()
@@ -427,21 +436,27 @@ return true;
                     .matcher(MethodMatcher.create()
                             .addEqString("autofill_service")
                             .addInvoke(mSetStringResourceConfigIfNeed.toString())
-                    )).getMethodInstance(classLoader);
-            hookE(mConfigForAutofillService).intercept(chain -> null);
+                    ));
+            log(Log.DEBUG, TAG, "configForAutofillService -> " + mConfigForAutofillService);
+            hookE(mConfigForAutofillService.getMethodInstance(classLoader)).intercept(chain -> null);
         } catch (NoSuchMethodException e) {
             log(Log.WARN, TAG, "hook configForAutofillService", e);
-        } catch (NoResultException ignore) {
+        } catch (NoResultException e) {
+            log(Log.WARN, TAG, "dexkit search err", e);
         }
         try {
             var mSetStringArrayResourceConfigIfNeed = bridge.getMethod(FindMethod.create()
                     .searchInClass(classDataList)
                     .matcher(MethodMatcher.create()
-                            .addParamType(String.class)
-                            .addParamType(int.class)
+                            .anyOf(
+                                    MethodMatcher.create()
+                                            .paramTypes(Context.class, String.class, int.class),
+                                    MethodMatcher.create()
+                                            .paramTypes(String.class, int.class))
                             .addInvoke("Landroid/content/res/Resources;->getStringArray(I)[Ljava/lang/String;")
                             .addInvoke("Landroid/provider/Settings$Secure;->putString(Landroid/content/ContentResolver;Ljava/lang/String;Ljava/lang/String;)Z")
                     ));
+            log(Log.DEBUG, TAG, "setStringArrayResourceConfigIfNeed -> " + mSetStringArrayResourceConfigIfNeed);
             var setStringArrayResourceConfigIfNeedMethodInstance = mSetStringArrayResourceConfigIfNeed.getMethodInstance(classLoader);
             deoptimize(setStringArrayResourceConfigIfNeedMethodInstance);
             var mSetDefaultConfigForAutofillAndCredentialManager = bridge.getMethod(FindMethod.create()
@@ -449,11 +464,13 @@ return true;
                     .matcher(MethodMatcher.create()
                             .usingEqStrings("credential_service", "credential_service_primary")
                             .addInvoke(mSetStringArrayResourceConfigIfNeed.toString())
-                    )).getMethodInstance(classLoader);
-            hookE(mSetDefaultConfigForAutofillAndCredentialManager).intercept(chain -> null);
+                    ));
+            log(Log.DEBUG, TAG, "setDefaultConfigForAutofillAndCredentialManager -> " + mSetDefaultConfigForAutofillAndCredentialManager);
+            hookE(mSetDefaultConfigForAutofillAndCredentialManager.getMethodInstance(classLoader)).intercept(chain -> null);
         } catch (NoSuchMethodException e) {
             log(Log.ERROR, TAG, "hook setDefaultConfigForAutofillAndCredentialManager", e);
-        } catch (NoResultException ignore) {
+        } catch (NoResultException e) {
+            log(Log.ERROR, TAG, "dexkit search err", e);
         }
     }
 
