@@ -4,6 +4,7 @@ import android.annotation.SuppressLint;
 import android.app.ActivityThread;
 import android.content.ComponentName;
 import android.content.Context;
+import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.credentials.CredentialManager;
 import android.credentials.CredentialProviderInfo;
@@ -16,8 +17,6 @@ import android.util.Log;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.RequiresApi;
-
-import com.android.settings.applications.credentials.CombinedProviderInfo;
 
 import org.luckypray.dexkit.DexKitCacheBridge;
 import org.luckypray.dexkit.exceptions.NoResultException;
@@ -281,16 +280,20 @@ public class PasskeyHook extends XposedModule {
             } catch (NoSuchMethodException ignored) {
             }
             try {
+                var combinedProviderInfoClass = classLoader.loadClass(
+                        "com.android.settings.applications.credentials.CombinedProviderInfo");
+                var getApplicationInfoMethod = combinedProviderInfoClass.getDeclaredMethod("getApplicationInfo");
+                var getCredentialProviderInfosMethod = combinedProviderInfoClass.getDeclaredMethod("getCredentialProviderInfos");
                 var setProviders = iClass.getDeclaredMethod("setProviders", String.class, List.class);
                 var getAllProviders = iClass.getDeclaredMethod("getAllProviders", int.class);
                 var getUser = iClass.getDeclaredMethod("getUser");
                 hookE(setProviders).intercept(chain -> {
                     if (chain.getArg(0) instanceof String autofillProvider) {
                         // Get the list of providers and see if any match the key (package name).
-                        final List<CombinedProviderInfo> allProviders = (List<CombinedProviderInfo>) getInvoker(getAllProviders).invoke(chain.getThisObject(), getInvoker(getUser).invoke(chain.getThisObject()));
-                        CombinedProviderInfo matchedProvider = null;
-                        for (CombinedProviderInfo cpi : allProviders) {
-                            if (cpi.getApplicationInfo().packageName.equals(key.get())) {
+                        final List<?> allProviders = (List<?>) getInvoker(getAllProviders).invoke(chain.getThisObject(), getInvoker(getUser).invoke(chain.getThisObject()));
+                        Object matchedProvider = null;
+                        for (Object cpi : allProviders) {
+                            if (((ApplicationInfo)getInvoker(getApplicationInfoMethod).invoke(cpi)).packageName.equals(key.get())) {
                                 matchedProvider = cpi;
                                 break;
                             }
@@ -298,9 +301,10 @@ public class PasskeyHook extends XposedModule {
                         if (matchedProvider != null) {
                             // Get the component names and save them.
                             final List<String> credManComponents = new ArrayList<>();
-                            for (CredentialProviderInfo pi : matchedProvider.getCredentialProviderInfos()) {
+                            for (CredentialProviderInfo pi : (List<CredentialProviderInfo>) getInvoker(getCredentialProviderInfosMethod).invoke(matchedProvider)) {
                                 credManComponents.add(HiddenApiBridge.ComponentInfo_getComponentName(pi.getServiceInfo()).flattenToString());
                             }
+                            log(Log.DEBUG, TAG, "setProviders -> " + credManComponents);
                             return chain.proceed(new Object[]{autofillProvider, credManComponents});
                         }
                     }
