@@ -29,6 +29,7 @@ import java.lang.reflect.Executable;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -112,7 +113,6 @@ public class PasskeyHook extends XposedModule {
         try {
             var buildClass = classLoader.loadClass("miui.os.Build");
             fIsInternationalBuildBoolean = buildClass.getDeclaredField("IS_INTERNATIONAL_BUILD");
-            fIsInternationalBuildBoolean.setAccessible(true);
         } catch (Exception e) {
             log(Log.ERROR, TAG, "find IS_INTERNATIONAL_BUILD failed", e);
         }
@@ -246,12 +246,13 @@ public class PasskeyHook extends XposedModule {
         if (iClass != null) {
             try {
                 var aMethod = iClass.getDeclaredMethod("getCombinedProviderInfos", CredentialManager.class, int.class);
-                hookE(aMethod).intercept(chain -> {
-                    if (chain.getArg(0) instanceof CredentialManager credentialManager && chain.getArg(1) instanceof Integer userId) {
-                        return HiddenApiBridge.CredentialManager_getCredentialProviderServices(credentialManager, userId, 3/* CredentialManager.PROVIDER_FILTER_USER_PROVIDERS_INCLUDING_HIDDEN */);
-                    }
-                    return chain.proceed();
-                });
+                hookE(aMethod).intercept(isInternationalBuildHooker);
+//                hookE(aMethod).intercept(chain -> {
+//                    if (chain.getArg(0) instanceof CredentialManager credentialManager && chain.getArg(1) instanceof Integer userId) {
+//                        return HiddenApiBridge.CredentialManager_getCredentialProviderServices(credentialManager, userId, 3/* CredentialManager.PROVIDER_FILTER_USER_PROVIDERS_INCLUDING_HIDDEN */);
+//                    }
+//                    return chain.proceed();
+//                });
             } catch (NoSuchMethodException ignored) {
             }
         }
@@ -261,6 +262,7 @@ public class PasskeyHook extends XposedModule {
         var iClass = classLoader.loadClass("com.android.settings.applications.defaultapps.DefaultAppPreferenceController");
         var preferenceClass = classLoader.loadClass("androidx.preference.Preference");
         var aMethod = iClass.getDeclaredMethod("updateState", preferenceClass);
+        deoptimize(aMethod);
         hookE(aMethod).intercept(isInternationalBuildHooker);
     }
 
@@ -278,6 +280,7 @@ public class PasskeyHook extends XposedModule {
                         return chain.proceed();
                     });
                 } else {
+                    deoptimize(aMethod);
                     hookE(aMethod).intercept(isInternationalBuildHooker);
                 }
             } catch (NoSuchMethodException ignored) {
@@ -336,17 +339,31 @@ public class PasskeyHook extends XposedModule {
         ).forEach(methodData -> {
             log(Log.DEBUG, TAG, "onLeftSideClicked -> " + methodData);
             try {
-                hookE(methodData.getMethodInstance(classLoader)).intercept(isInternationalBuildHooker);
+                var aMethod = methodData.getMethodInstance(classLoader);
+                deoptimize(aMethod);
+                hookE(aMethod).intercept(isInternationalBuildHooker);
             } catch (NoSuchMethodException e) {
                 log(Log.ERROR, TAG, "hook onLeftSideClicked failed", e);
             }
         });
     }
 
+    private void deoptimizeMethods(Class<?> clazz, String... names) {
+        var list = Arrays.asList(names);
+        Arrays.stream(clazz.getDeclaredMethods())
+                .filter(method -> list.contains(method.getName()))
+                .forEach(this::deoptimize);
+    }
+
     private void hookRequestSession(ClassLoader classLoader) throws NoSuchMethodException, ClassNotFoundException, NoSuchFieldException {
         var cRequestSession = classLoader.loadClass("com.android.server.credentials.RequestSession");
+        try {
+            deoptimizeMethods(classLoader.loadClass("com.android.server.credentials.ProviderGetSession"), "createNewSession");
+            deoptimizeMethods(classLoader.loadClass("com.android.server.credentials.ProviderCreateSession"), "createNewSession");
+        } catch (ClassNotFoundException e) {
+            log(Log.WARN, TAG, "ProviderGetSession or ProviderCreateSession not found, skipping deoptimize", e);
+        }
         var fHybridService = cRequestSession.getDeclaredField("mHybridService");
-        fHybridService.setAccessible(true);
         var aClass = classLoader.loadClass("com.android.server.credentials.RequestSession$SessionLifetime");
         Constructor<?> constructorRequestSession;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
@@ -360,7 +377,7 @@ public class PasskeyHook extends XposedModule {
         }
         hookE(constructorRequestSession).intercept(chain -> {
             chain.proceed();
-            fHybridService.set(chain.getThisObject(), "com.google.android.gms/.auth.api.credentials.credman.service.RemoteService");
+            UnsafeUtils.INSTANCE.setObjectField(fHybridService, chain.getThisObject(), "com.google.android.gms/.auth.api.credentials.credman.service.RemoteService");
             return null;
         });
     }
@@ -505,7 +522,7 @@ public class PasskeyHook extends XposedModule {
                     boolean prev = fIsInternationalBuildBoolean.getBoolean(null);
                     PREV_VALUE.set(prev);
                     if (!prev) {
-                        fIsInternationalBuildBoolean.setBoolean(null, true);
+                        UnsafeUtils.INSTANCE.setStaticBooleanField(fIsInternationalBuildBoolean, true);
                     }
                 }
                 DEPTH.set(depth + 1);
@@ -520,7 +537,7 @@ public class PasskeyHook extends XposedModule {
                         PREV_VALUE.remove();
                         DEPTH.remove();
                         if (prev != null) {
-                            fIsInternationalBuildBoolean.setBoolean(null, prev);
+                            UnsafeUtils.INSTANCE.setStaticBooleanField(fIsInternationalBuildBoolean, prev);
                         }
                     } else {
                         DEPTH.set(d);
