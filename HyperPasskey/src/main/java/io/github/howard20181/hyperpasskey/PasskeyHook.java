@@ -155,10 +155,12 @@ public class PasskeyHook extends XposedModule {
                 } catch (Exception e) {
                     log(Log.ERROR, TAG, "hook OnCombiPreferenceClickListener failed", e);
                 }
-                try {
-                    hookCredentialManagerPreferenceController(classLoader, bridge);
-                } catch (Exception e) {
-                    log(Log.ERROR, TAG, "hook CredentialManagerPreferenceController failed", e);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.CINNAMON_BUN) {
+                    try {
+                        hookCredentialManagerPreferenceController(classLoader, bridge);
+                    } catch (Exception e) {
+                        log(Log.ERROR, TAG, "hook CredentialManagerPreferenceController failed", e);
+                    }
                 }
                 if (Build.VERSION.SDK_INT == Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                     try {
@@ -245,6 +247,7 @@ public class PasskeyHook extends XposedModule {
         }
     }
 
+    @RequiresApi(Build.VERSION_CODES.CINNAMON_BUN)
     private void hookCredentialManagerPreferenceController(ClassLoader classLoader, DexKitCacheBridge.RecyclableBridge bridge) throws ClassNotFoundException, NoSuchMethodException, NoSuchFieldException {
         var combiPreferenceClass = classLoader.loadClass("com.android.settings.applications.credentials.CredentialManagerPreferenceController$CombiPreference");
         var onBindViewHolder = combiPreferenceClass.getDeclaredMethod("onBindViewHolder", classLoader.loadClass("androidx.preference.PreferenceViewHolder"));
