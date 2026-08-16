@@ -13,6 +13,8 @@ import android.credentials.selection.IntentCreationResult;
 import android.os.CancellationSignal;
 import android.service.credentials.CallingAppInfo;
 import android.util.Log;
+import android.view.View;
+import android.widget.CompoundButton;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -27,6 +29,7 @@ import org.luckypray.dexkit.result.ClassData;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Executable;
 import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -45,8 +48,7 @@ public class PasskeyHook extends XposedModule {
     private static final String settingsPackageName = "com.android.settings";
     private static final String securityCenterPackageName = "com.miui.securitycenter";
     private static final String xiaomiScannerPackageName = "com.xiaomi.scanner";
-    private static Field fIsInternationalBuildBoolean;
-    private final static Hooker isInternationalBuildHooker = new IsInternationalBuildHooker();
+    private static XposedModule module;
     private Object[] param;
     private static final int PARAM_PACKAGE_NAME = 0;
     private static final int PARAM_CLASS_LOADER = 1;
@@ -69,6 +71,8 @@ public class PasskeyHook extends XposedModule {
 
     @Override
     public void onModuleLoaded(@NonNull ModuleLoadedParam param) {
+        module = this;
+        UnsafeUtils.INSTANCE.setXposedModule(this);
         System.loadLibrary("dexkit");
     }
 
@@ -98,6 +102,11 @@ public class PasskeyHook extends XposedModule {
             } catch (Exception e) {
                 log(Log.ERROR, TAG, "hook RequestSession failed", e);
             }
+            try {
+                hookCredentialManagerService(classLoader);
+            } catch (Exception e) {
+                log(Log.ERROR, TAG, "hook CredentialManagerService failed", e);
+            }
         } catch (Throwable tr) {
             log(Log.ERROR, TAG, "Error hooking system service", tr);
         }
@@ -110,12 +119,6 @@ public class PasskeyHook extends XposedModule {
         var packageName = param.getPackageName();
         Context ctx = ActivityThread.currentActivityThread().getSystemContext();
         var pm = ctx.getPackageManager();
-        try {
-            var buildClass = classLoader.loadClass("miui.os.Build");
-            fIsInternationalBuildBoolean = buildClass.getDeclaredField("IS_INTERNATIONAL_BUILD");
-        } catch (Exception e) {
-            log(Log.ERROR, TAG, "find IS_INTERNATIONAL_BUILD failed", e);
-        }
         DexKitCacheBridge.init(MemoryCache.INSTANCE);
         long versionCode = 0;
         String versionName = "";
@@ -142,24 +145,37 @@ public class PasskeyHook extends XposedModule {
     private void hookPackage(String packageName, ClassLoader classLoader, DexKitCacheBridge.RecyclableBridge bridge) {
         switch (packageName) {
             case settingsPackageName -> {
+                Field fIsInternationalBuildBoolean = null;
                 try {
-                    hookDefaultCombinedPicker(classLoader);
+                    var buildClass = classLoader.loadClass("miui.os.Build");
+                    fIsInternationalBuildBoolean = buildClass.getDeclaredField("IS_INTERNATIONAL_BUILD");
+                } catch (Exception e) {
+                    log(Log.ERROR, TAG, "find IS_INTERNATIONAL_BUILD failed", e);
+                }
+                var isInternationalBuildHooker = new IsInternationalBuildHooker(fIsInternationalBuildBoolean);
+                try {
+                    hookDefaultCombinedPicker(classLoader, isInternationalBuildHooker);
                 } catch (Exception e) {
                     log(Log.ERROR, TAG, "hook DefaultCombinedPicker failed", e);
                 }
                 try {
-                    hookDefaultCombinedPreferenceController(classLoader);
+                    hookDefaultCombinedPreferenceController(classLoader, isInternationalBuildHooker);
                 } catch (Exception e) {
                     log(Log.ERROR, TAG, "hook DefaultCombinedPreferenceController failed", e);
                 }
                 try {
-                    hookOnCombiPreferenceClickListener(classLoader, bridge);
+                    hookOnCombiPreferenceClickListener(classLoader, bridge, isInternationalBuildHooker);
                 } catch (Exception e) {
                     log(Log.ERROR, TAG, "hook OnCombiPreferenceClickListener failed", e);
                 }
+                try {
+                    hookCredentialManagerPreferenceController(classLoader, bridge);
+                } catch (Exception e) {
+                    log(Log.ERROR, TAG, "hook CredentialManagerPreferenceController failed", e);
+                }
                 if (Build.VERSION.SDK_INT == Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                     try {
-                        hookDefaultAppPreferenceController(classLoader);
+                        hookDefaultAppPreferenceController(classLoader, isInternationalBuildHooker);
                     } catch (Exception e) {
                         log(Log.ERROR, TAG, "hook DefaultAppPreferenceController failed", e);
                     }
@@ -194,6 +210,8 @@ public class PasskeyHook extends XposedModule {
 
     @Override
     public void onHotReloaded(@NonNull HotReloadedParam param) {
+        module = this;
+        UnsafeUtils.INSTANCE.setXposedModule(this);
         var isSystemServer = param.isSystemServer();
         if (param.getSavedInstanceState() instanceof Object[] outState
                 && outState[PARAM_PACKAGE_NAME] instanceof String packageName
@@ -241,11 +259,80 @@ public class PasskeyHook extends XposedModule {
         }
     }
 
-    private void hookDefaultCombinedPreferenceController(ClassLoader classLoader) throws ClassNotFoundException {
+    private void hookCredentialManagerPreferenceController(ClassLoader classLoader, DexKitCacheBridge.RecyclableBridge bridge) throws ClassNotFoundException, NoSuchMethodException, NoSuchFieldException {
+        var combiPreferenceClass = classLoader.loadClass("com.android.settings.applications.credentials.CredentialManagerPreferenceController$CombiPreference");
+        var onBindViewHolder = combiPreferenceClass.getDeclaredMethod("onBindViewHolder", classLoader.loadClass("androidx.preference.PreferenceViewHolder"));
+        var mChecked = combiPreferenceClass.getDeclaredField("mChecked");
+        mChecked.setAccessible(true);
+        var mOnClickListener = combiPreferenceClass.getDeclaredField("mOnClickListener");
+        mOnClickListener.setAccessible(true);
+        var mSwitch = combiPreferenceClass.getDeclaredField("mSwitch");
+        mSwitch.setAccessible(true);
+        var maybeUpdateContentDescriptionMethod = combiPreferenceClass.getDeclaredMethod("maybeUpdateContentDescription");
+        var viewHolder = classLoader.loadClass("androidx.recyclerview.widget.RecyclerView$ViewHolder");
+        var itemViewField = viewHolder.getDeclaredField("itemView");
+        itemViewField.setAccessible(true);
+        var R$idClass = classLoader.loadClass("com.android.settingslib.R$id");
+        var switchWidget = R$idClass.getDeclaredField("switchWidget");
+        switchWidget.setAccessible(true);
+        var onCheckChangedMatcher = MethodMatcher.create()
+                .name("onCheckChanged")
+                .paramTypes(combiPreferenceClass, boolean.class)
+                .anyOf(
+                        MethodMatcher.create()
+                                .addInvoke("Lcom/android/settings/applications/credentials/CredentialManagerPreferenceController;->togglePackageNameEnabled(Ljava/lang/String;)Z"),
+                        MethodMatcher.create()
+                                .addInvoke("Lcom/android/settings/applications/credentials/CredentialManagerPreferenceController;->togglePackageNameDisabled(Ljava/lang/String;)V"));
+        bridge.getMethods(FindMethod.create()
+                .searchPackages("com.android.settings.applications.credentials")
+                .matcher(onCheckChangedMatcher)
+        ).forEach(methodData -> {
+            log(Log.DEBUG, TAG, "onCheckChanged -> " + methodData);
+            try {
+                var onCheckChangedMethod = methodData.getMethodInstance(classLoader);
+                hookE(onBindViewHolder).intercept(chain -> {
+                    chain.proceed();
+                    var combiPreference = chain.getThisObject();
+                    if (mSwitch.get(combiPreference) == null && itemViewField.get(chain.getArg(0)) instanceof View itemView) {
+                        var checkableView = itemView.findViewById(switchWidget.getInt(null));
+                        if (checkableView instanceof CompoundButton switchView) {
+                            switchView.setChecked(mChecked.getBoolean(combiPreference));
+                            switchView.setOnClickListener(buttonView -> {
+                                try {
+                                    var clickListener = mOnClickListener.get(combiPreference);
+                                    if (clickListener == null) {
+                                        return;
+                                    }
+                                    var isChecked = switchView.isChecked();
+                                    boolean accepted = (boolean) getInvoker(onCheckChangedMethod)
+                                            .invoke(clickListener, combiPreference, isChecked);
+                                    if (!accepted) {
+                                        UnsafeUtils.INSTANCE.setBooleanField(mChecked, combiPreference, false);
+                                        switchView.setChecked(false);
+                                    }
+                                } catch (IllegalAccessException | InvocationTargetException e) {
+                                    log(Log.ERROR, TAG, "Failed setOnCheckedChangeListener", e);
+                                }
+                            });
+                            UnsafeUtils.INSTANCE.setObjectField(mSwitch, combiPreference, switchView);
+                            getInvoker(maybeUpdateContentDescriptionMethod).invoke(combiPreference);
+                        }
+                        log(Log.DEBUG, TAG, "checkableView=" + checkableView.getClass().getName());
+                    }
+                    return null;
+                });
+            } catch (NoSuchMethodException e) {
+                log(Log.ERROR, TAG, "Failed to find onCheckChanged", e);
+            }
+        });
+    }
+
+    private void hookDefaultCombinedPreferenceController(ClassLoader classLoader, Hooker isInternationalBuildHooker) throws ClassNotFoundException {
         var iClass = classLoader.loadClass("com.android.settings.applications.credentials.DefaultCombinedPreferenceController");
         if (iClass != null) {
             try {
                 var aMethod = iClass.getDeclaredMethod("getCombinedProviderInfos", CredentialManager.class, int.class);
+                deoptimize(aMethod);
                 hookE(aMethod).intercept(isInternationalBuildHooker);
 //                hookE(aMethod).intercept(chain -> {
 //                    if (chain.getArg(0) instanceof CredentialManager credentialManager && chain.getArg(1) instanceof Integer userId) {
@@ -258,7 +345,7 @@ public class PasskeyHook extends XposedModule {
         }
     }
 
-    private void hookDefaultAppPreferenceController(ClassLoader classLoader) throws ClassNotFoundException, NoSuchMethodException {
+    private void hookDefaultAppPreferenceController(ClassLoader classLoader, Hooker isInternationalBuildHooker) throws ClassNotFoundException, NoSuchMethodException {
         var iClass = classLoader.loadClass("com.android.settings.applications.defaultapps.DefaultAppPreferenceController");
         var preferenceClass = classLoader.loadClass("androidx.preference.Preference");
         var aMethod = iClass.getDeclaredMethod("updateState", preferenceClass);
@@ -266,7 +353,7 @@ public class PasskeyHook extends XposedModule {
         hookE(aMethod).intercept(isInternationalBuildHooker);
     }
 
-    private void hookDefaultCombinedPicker(ClassLoader classLoader) throws ClassNotFoundException {
+    private void hookDefaultCombinedPicker(ClassLoader classLoader, Hooker isInternationalBuildHooker) throws ClassNotFoundException {
         var iClass = classLoader.loadClass("com.android.settings.applications.credentials.DefaultCombinedPicker");
         if (iClass != null) {
             AtomicReference<String> key = new AtomicReference<>();
@@ -285,7 +372,7 @@ public class PasskeyHook extends XposedModule {
                 }
             } catch (NoSuchMethodException ignored) {
             }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.CINNAMON_BUN && false) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.CINNAMON_BUN || true) {
                 try {
                     var combinedProviderInfoClass = classLoader.loadClass(
                             "com.android.settings.applications.credentials.CombinedProviderInfo");
@@ -295,25 +382,27 @@ public class PasskeyHook extends XposedModule {
                     var getAllProviders = iClass.getDeclaredMethod("getAllProviders", int.class);
                     var getUser = iClass.getDeclaredMethod("getUser");
                     hookE(setProviders).intercept(chain -> {
-                        if (chain.getArg(0) instanceof String autofillProvider) {
+                        if (chain.getArg(0) instanceof String autofillProvider && chain.getArg(1) instanceof List<?> primaryCredManProviders) {
+                            log(Log.DEBUG, TAG, "setProviders: primaryCredManProviders=" + primaryCredManProviders);
+                            return chain.proceed();
                             // Get the list of providers and see if any match the key (package name).
-                            final List<?> allProviders = (List<?>) getInvoker(getAllProviders).invoke(chain.getThisObject(), getInvoker(getUser).invoke(chain.getThisObject()));
-                            Object matchedProvider = null;
-                            for (Object cpi : allProviders) {
-                                if (((ApplicationInfo) getInvoker(getApplicationInfoMethod).invoke(cpi)).packageName.equals(key.get())) {
-                                    matchedProvider = cpi;
-                                    break;
-                                }
-                            }
-                            if (matchedProvider != null) {
-                                // Get the component names and save them.
-                                final List<String> credManComponents = new ArrayList<>();
-                                for (CredentialProviderInfo pi : (List<CredentialProviderInfo>) getInvoker(getCredentialProviderInfosMethod).invoke(matchedProvider)) {
-                                    credManComponents.add(HiddenApiBridge.ComponentInfo_getComponentName(pi.getServiceInfo()).flattenToString());
-                                }
-                                log(Log.DEBUG, TAG, "setProviders -> " + credManComponents);
-                                return chain.proceed(new Object[]{autofillProvider, credManComponents});
-                            }
+//                            final List<?> allProviders = (List<?>) getInvoker(getAllProviders).invoke(chain.getThisObject(), getInvoker(getUser).invoke(chain.getThisObject()));
+//                            Object matchedProvider = null;
+//                            for (Object cpi : allProviders) {
+//                                if (((ApplicationInfo) getInvoker(getApplicationInfoMethod).invoke(cpi)).packageName.equals(key.get())) {
+//                                    matchedProvider = cpi;
+//                                    break;
+//                                }
+//                            }
+//                            if (matchedProvider != null) {
+//                                // Get the component names and save them.
+//                                final List<String> credManComponents = new ArrayList<>();
+//                                for (CredentialProviderInfo pi : (List<CredentialProviderInfo>) getInvoker(getCredentialProviderInfosMethod).invoke(matchedProvider)) {
+//                                    credManComponents.add(HiddenApiBridge.ComponentInfo_getComponentName(pi.getServiceInfo()).flattenToString());
+//                                }
+//                                log(Log.DEBUG, TAG, "setProviders -> " + credManComponents);
+//                                return chain.proceed(new Object[]{autofillProvider, credManComponents});
+//                            }
                         }
                         return chain.proceed();
                     });
@@ -324,7 +413,7 @@ public class PasskeyHook extends XposedModule {
         }
     }
 
-    private void hookOnCombiPreferenceClickListener(ClassLoader classLoader, DexKitCacheBridge.RecyclableBridge bridge) {
+    private void hookOnCombiPreferenceClickListener(ClassLoader classLoader, DexKitCacheBridge.RecyclableBridge bridge, Hooker isInternationalBuildHooker) {
         var onLeftSideClickedMatcher = MethodMatcher.create()
                 .name("onLeftSideClicked")
                 .paramCount(0)
@@ -379,6 +468,18 @@ public class PasskeyHook extends XposedModule {
             chain.proceed();
             UnsafeUtils.INSTANCE.setObjectField(fHybridService, chain.getThisObject(), "com.google.android.gms/.auth.api.credentials.credman.service.RemoteService");
             return null;
+        });
+    }
+
+    private void hookCredentialManagerService(ClassLoader classLoader) throws ClassNotFoundException, NoSuchMethodException {
+        var CredentialManagerServiceClass = classLoader.loadClass("com.android.server.credentials.CredentialManagerService$CredentialManagerServiceStub");
+        // setEnabledProviders(List<String> primaryProviders, List<String> providers, int userId, ISetEnabledProvidersCallback callback
+        var setEnabledProvidersMethod = CredentialManagerServiceClass.getDeclaredMethod("setEnabledProviders", List.class, List.class, int.class, classLoader.loadClass("android.credentials.ISetEnabledProvidersCallback"));
+        hookE(setEnabledProvidersMethod).intercept(chain -> {
+            if (chain.getArg(0) instanceof List<?> primaryProviders && chain.getArg(1) instanceof List<?> providers && chain.getArg(2) instanceof Integer userId) {
+                log(Log.DEBUG, TAG, "setEnabledProviders: primaryProviders=" + primaryProviders + ", providers=" + providers + ", userId=" + userId);
+            }
+            return chain.proceed();
         });
     }
 
@@ -504,10 +605,12 @@ public class PasskeyHook extends XposedModule {
         }
     }
 
-    private static class IsInternationalBuildHooker implements Hooker {
+    private record IsInternationalBuildHooker(
+            Field fIsInternationalBuildBoolean) implements Hooker {
         private static final ReentrantLock INTL_LOCK = new ReentrantLock(true); // fair optional
         private static final ThreadLocal<Integer> DEPTH = ThreadLocal.withInitial(() -> 0);
         private static final ThreadLocal<Boolean> PREV_VALUE = new ThreadLocal<>();
+        private static final UnsafeUtils UNSAFE = UnsafeUtils.INSTANCE;
 
         @Nullable
         @Override
@@ -522,7 +625,7 @@ public class PasskeyHook extends XposedModule {
                     boolean prev = fIsInternationalBuildBoolean.getBoolean(null);
                     PREV_VALUE.set(prev);
                     if (!prev) {
-                        UnsafeUtils.INSTANCE.setStaticBooleanField(fIsInternationalBuildBoolean, true);
+                        UNSAFE.setStaticBooleanField(fIsInternationalBuildBoolean, true);
                     }
                 }
                 DEPTH.set(depth + 1);
@@ -537,7 +640,7 @@ public class PasskeyHook extends XposedModule {
                         PREV_VALUE.remove();
                         DEPTH.remove();
                         if (prev != null) {
-                            UnsafeUtils.INSTANCE.setStaticBooleanField(fIsInternationalBuildBoolean, prev);
+                            UNSAFE.setStaticBooleanField(fIsInternationalBuildBoolean, prev);
                         }
                     } else {
                         DEPTH.set(d);

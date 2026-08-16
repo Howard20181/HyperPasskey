@@ -3,11 +3,20 @@ package io.github.howard20181.hyperpasskey
 import android.annotation.SuppressLint
 import android.graphics.Point
 import android.os.Build
+import android.util.Log
+import io.github.libxposed.api.XposedModule
 import sun.misc.Unsafe
 import java.lang.reflect.Field
 import java.lang.reflect.Modifier
 
 object UnsafeUtils {
+    lateinit var xposedModule: XposedModule
+        private set
+
+    fun setXposedModule(module: XposedModule) {
+        xposedModule = module
+    }
+
     private val UNSAFE: Unsafe by lazy {
         @SuppressLint("DiscouragedPrivateApi")
         Unsafe::class.java.getDeclaredField("theUnsafe").let { field ->
@@ -36,14 +45,19 @@ object UnsafeUtils {
             try {
                 field.isAccessible = true
                 field.setBoolean(null, value)
-            } catch (_: IllegalAccessException) {
+            } catch (e: IllegalAccessException) {
+                xposedModule.log(
+                    Log.WARN,
+                    "UnsafeUtils",
+                    "setStaticBooleanField failed and will use Unsafe",
+                    e
+                )
                 setStaticBoolean(
                     field,
                     value
                 )
             }
         }
-
     }
 
     private fun setStaticBoolean(field: Field, value: Boolean) {
@@ -56,6 +70,27 @@ object UnsafeUtils {
 
         val offset = UNSAFE.getInt(field, fieldOffsetValue).toLong()
         UNSAFE.putBoolean(field.declaringClass, offset, value)
+    }
+
+    fun setBooleanField(field: Field, obj: Any, value: Boolean) {
+        if (hasStaticFinalRestriction(field)) {
+            setBoolean(
+                field,
+                obj,
+                value
+            )
+        } else {
+            try {
+                field.isAccessible = true
+                field.setBoolean(obj, value)
+            } catch (_: IllegalAccessException) {
+                setBoolean(
+                    field,
+                    obj,
+                    value
+                )
+            }
+        }
     }
 
     fun setObjectField(field: Field, obj: Any, value: Any?) {
@@ -79,6 +114,27 @@ object UnsafeUtils {
         }
     }
 
+    private fun setBoolean(field: Field, obj: Any, value: Boolean) {
+        try {
+            // Resolve the target field before reading its internal ART offset.
+            field.isAccessible = true
+            field.getBoolean(obj)
+        } catch (_: IllegalAccessException) {
+        }
+        val modifiers = field.modifiers
+        val isVolatile = (modifiers and Modifier.VOLATILE) != 0
+        val offset = UNSAFE.getInt(field, fieldOffsetValue).toLong()
+        if ((modifiers and Modifier.STATIC) != 0) {
+            UNSAFE.putBoolean(field.declaringClass, offset, value)
+        } else {
+            if (isVolatile) {
+                putInt8Volatile(obj, offset, if (value) 1 else 0)
+            } else {
+                UNSAFE.putBoolean(obj, offset, value)
+            }
+        }
+    }
+
     private fun setObject(field: Field, obj: Any, value: Any?) {
         try {
             // Resolve the target field before reading its internal ART offset.
@@ -98,6 +154,17 @@ object UnsafeUtils {
                 UNSAFE.putObject(obj, offset, value)
             }
         }
+    }
+
+    private fun putInt8Volatile(base: Any?, offset: Long, unsigned: Int) {
+        val alignedOffset = offset and 3L.inv()
+        var oldValue: Int
+        var newValue: Int
+        do {
+            oldValue = UNSAFE.getIntVolatile(base, alignedOffset)
+            val bits = (offset - alignedOffset).toInt() * 8
+            newValue = (oldValue and (0xFF shl bits).inv()) or (unsigned shl bits)
+        } while (!UNSAFE.compareAndSwapInt(base, alignedOffset, oldValue, newValue))
     }
 
     @Suppress("DEPRECATION")
