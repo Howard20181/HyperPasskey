@@ -32,7 +32,6 @@ import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Set;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -96,11 +95,6 @@ public class PasskeyHook extends XposedModule {
             } catch (Exception e) {
                 log(Log.ERROR, TAG, "hook RequestSession failed", e);
             }
-            try {
-                hookCredentialManagerService(classLoader);
-            } catch (Exception e) {
-                log(Log.ERROR, TAG, "hook CredentialManagerService failed", e);
-            }
         } catch (Throwable tr) {
             log(Log.ERROR, TAG, "Error hooking system service", tr);
         }
@@ -129,7 +123,6 @@ public class PasskeyHook extends XposedModule {
                 versionName,
                 versionCode
         };
-        log(Log.DEBUG, TAG, "create DexKitCacheBridge for " + appTag);
         try (var bridge = DexKitCacheBridge.create(appTag, classLoader)) {
             hookPackage(packageName, classLoader, bridge);
             this.bridge = bridge;
@@ -224,7 +217,6 @@ public class PasskeyHook extends XposedModule {
                     System.loadLibrary("dexkit");
                     DexKitCacheBridge.init(MemoryCache.INSTANCE);
                     var appTag = packageName + ":" + versionName + "-" + versionCode;
-                    log(Log.DEBUG, TAG, "create DexKitCacheBridge for " + appTag);
                     try (var bridge = DexKitCacheBridge.create(appTag, classLoader)) {
                         hookPackage(packageName, classLoader, bridge);
                         this.bridge = bridge;
@@ -247,7 +239,8 @@ public class PasskeyHook extends XposedModule {
             try {
                 var aMethod = iClass.getDeclaredMethod("getAppPackageName");
                 hookE(aMethod).intercept(chain -> "");
-            } catch (NoSuchMethodException ignored) {
+            } catch (NoSuchMethodException e) {
+                log(Log.ERROR, TAG, "hook MiFiDoBean failed", e);
             }
         }
     }
@@ -280,11 +273,10 @@ public class PasskeyHook extends XposedModule {
                 .searchPackages("com.android.settings.applications.credentials")
                 .matcher(onCheckChangedMatcher)
         ).forEach(methodData -> {
-            log(Log.DEBUG, TAG, "onCheckChanged -> " + methodData);
             try {
                 var onCheckChangedMethod = methodData.getMethodInstance(classLoader);
                 hookE(onBindViewHolder).intercept(chain -> {
-                    chain.proceed();
+                    var result = chain.proceed();
                     var combiPreference = chain.getThisObject();
                     if (mSwitch.get(combiPreference) == null && itemViewField.get(chain.getArg(0)) instanceof View itemView) {
                         var checkableView = itemView.findViewById(switchWidget.getInt(null));
@@ -310,9 +302,8 @@ public class PasskeyHook extends XposedModule {
                             UnsafeUtils.INSTANCE.setObjectField(mSwitch, combiPreference, switchView);
                             getInvoker(maybeUpdateContentDescriptionMethod).invoke(combiPreference);
                         }
-                        log(Log.DEBUG, TAG, "checkableView=" + checkableView.getClass().getName());
                     }
-                    return null;
+                    return result;
                 });
             } catch (NoSuchMethodException e) {
                 log(Log.ERROR, TAG, "Failed to find onCheckChanged", e);
@@ -365,7 +356,6 @@ public class PasskeyHook extends XposedModule {
                 .searchPackages("com.android.settings.applications.credentials")
                 .matcher(onLeftSideClickedMatcher)
         ).forEach(methodData -> {
-            log(Log.DEBUG, TAG, "onLeftSideClicked -> " + methodData);
             try {
                 var aMethod = methodData.getMethodInstance(classLoader);
                 deoptimize(aMethod);
@@ -407,18 +397,6 @@ public class PasskeyHook extends XposedModule {
             chain.proceed();
             UnsafeUtils.INSTANCE.setObjectField(fHybridService, chain.getThisObject(), "com.google.android.gms/.auth.api.credentials.credman.service.RemoteService");
             return null;
-        });
-    }
-
-    private void hookCredentialManagerService(ClassLoader classLoader) throws ClassNotFoundException, NoSuchMethodException {
-        var CredentialManagerServiceClass = classLoader.loadClass("com.android.server.credentials.CredentialManagerService$CredentialManagerServiceStub");
-        // setEnabledProviders(List<String> primaryProviders, List<String> providers, int userId, ISetEnabledProvidersCallback callback
-        var setEnabledProvidersMethod = CredentialManagerServiceClass.getDeclaredMethod("setEnabledProviders", List.class, List.class, int.class, classLoader.loadClass("android.credentials.ISetEnabledProvidersCallback"));
-        hookE(setEnabledProvidersMethod).intercept(chain -> {
-            if (chain.getArg(0) instanceof List<?> primaryProviders && chain.getArg(1) instanceof List<?> providers && chain.getArg(2) instanceof Integer userId) {
-                log(Log.DEBUG, TAG, "setEnabledProviders: primaryProviders=" + primaryProviders + ", providers=" + providers + ", userId=" + userId);
-            }
-            return chain.proceed();
         });
     }
 
@@ -485,7 +463,6 @@ public class PasskeyHook extends XposedModule {
             if (classData != null)
                 classDataList.add(classData);
         });
-        log(Log.DEBUG, TAG, "search in " + classDataList);
         try {
             var mSetStringResourceConfigIfNeed = bridge.getMethod(FindMethod.create()
                     .searchInClass(classDataList)
@@ -498,7 +475,6 @@ public class PasskeyHook extends XposedModule {
                             .addInvoke("Landroid/content/res/Resources;->getString(I)Ljava/lang/String;")
                             .addInvoke("Landroid/provider/Settings$Secure;->putString(Landroid/content/ContentResolver;Ljava/lang/String;Ljava/lang/String;)Z")
                     ));
-            log(Log.DEBUG, TAG, "setStringResourceConfigIfNeed -> " + mSetStringResourceConfigIfNeed);
             var setStringResourceConfigIfNeedMethodInstance = mSetStringResourceConfigIfNeed.getMethodInstance(classLoader);
             deoptimize(setStringResourceConfigIfNeedMethodInstance);
             var mConfigForAutofillService = bridge.getMethod(FindMethod.create()
@@ -507,7 +483,6 @@ public class PasskeyHook extends XposedModule {
                             .addEqString("autofill_service")
                             .addInvoke(mSetStringResourceConfigIfNeed.toString())
                     ));
-            log(Log.DEBUG, TAG, "configForAutofillService -> " + mConfigForAutofillService);
             hookE(mConfigForAutofillService.getMethodInstance(classLoader)).intercept(chain -> null);
         } catch (NoSuchMethodException e) {
             log(Log.WARN, TAG, "hook configForAutofillService", e);
@@ -526,7 +501,6 @@ public class PasskeyHook extends XposedModule {
                             .addInvoke("Landroid/content/res/Resources;->getStringArray(I)[Ljava/lang/String;")
                             .addInvoke("Landroid/provider/Settings$Secure;->putString(Landroid/content/ContentResolver;Ljava/lang/String;Ljava/lang/String;)Z")
                     ));
-            log(Log.DEBUG, TAG, "setStringArrayResourceConfigIfNeed -> " + mSetStringArrayResourceConfigIfNeed);
             var setStringArrayResourceConfigIfNeedMethodInstance = mSetStringArrayResourceConfigIfNeed.getMethodInstance(classLoader);
             deoptimize(setStringArrayResourceConfigIfNeedMethodInstance);
             var mSetDefaultConfigForAutofillAndCredentialManager = bridge.getMethod(FindMethod.create()
@@ -535,7 +509,6 @@ public class PasskeyHook extends XposedModule {
                             .usingEqStrings("credential_service", "credential_service_primary")
                             .addInvoke(mSetStringArrayResourceConfigIfNeed.toString())
                     ));
-            log(Log.DEBUG, TAG, "setDefaultConfigForAutofillAndCredentialManager -> " + mSetDefaultConfigForAutofillAndCredentialManager);
             hookE(mSetDefaultConfigForAutofillAndCredentialManager.getMethodInstance(classLoader)).intercept(chain -> null);
         } catch (NoSuchMethodException e) {
             log(Log.ERROR, TAG, "hook setDefaultConfigForAutofillAndCredentialManager", e);
