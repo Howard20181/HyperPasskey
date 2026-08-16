@@ -2,6 +2,8 @@ name: Android CI
 
 on:
   push:
+    branches:
+      - main
   pull_request:
   workflow_dispatch:
 
@@ -10,15 +12,8 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
-          fetch-depth: 0
-
-      - name: Checkout libxposed/api
-        uses: actions/checkout@v6
-        with:
-          repository: libxposed/api
-          path: libxposed/api
           fetch-depth: 0
 
       - name: set up JDK
@@ -31,27 +26,27 @@ jobs:
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' || github.ref_type == 'tag'
         run: |
           if [ ! -z "${{ secrets.SIGNING_KEY }}" ]; then
-          echo storePassword='${{ secrets.KEY_STORE_PASSWORD }}' >> local.properties
-          echo keyAlias='${{ secrets.ALIAS }}' >> local.properties
-          echo keyPassword='${{ secrets.KEY_PASSWORD }}' >> local.properties
-          echo storeFile='key.jks' >> local.properties
-          echo ${{ secrets.SIGNING_KEY }} | base64 --decode > key.jks
+            echo storePassword='${{ secrets.KEY_STORE_PASSWORD }}' >> local.properties
+            echo keyAlias='${{ secrets.ALIAS }}' >> local.properties
+            echo keyPassword='${{ secrets.KEY_PASSWORD }}' >> local.properties
+            echo storeFile='key.jks' >> local.properties
+            echo ${{ secrets.SIGNING_KEY }} | base64 --decode > key.jks
           fi
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v5
-
-      - name: Build dependency
-        working-directory: libxposed/api
-        run: |
-          ./gradlew publishToMavenLocal
+        uses: gradle/actions/setup-gradle@v6
 
       - name: Build with Gradle
-        run: |
-          ./gradlew assemble
+        run: ./gradlew assemble
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v6
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v7
         with:
-          name: Signed app bundle
-          path: HyperPasskey/build/outputs/apk
+          path: HyperPasskey/build/outputs/apk/release/*.apk
+          archive: false
+
+      - name: Upload debug artifact
+        uses: actions/upload-artifact@v7
+        with:
+          path: HyperPasskey/build/outputs/apk/debug/*.apk
+          archive: false
