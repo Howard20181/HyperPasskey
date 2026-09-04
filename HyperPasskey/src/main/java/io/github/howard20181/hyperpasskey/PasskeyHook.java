@@ -4,6 +4,7 @@ import android.annotation.SuppressLint;
 import android.app.ActivityThread;
 import android.content.ComponentName;
 import android.content.Context;
+import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.credentials.CredentialManager;
 import android.os.Build;
@@ -29,6 +30,7 @@ import java.lang.reflect.Executable;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
@@ -100,6 +102,25 @@ public class PasskeyHook extends XposedModule {
         }
     }
 
+    private void dumpApplicationInfo(ApplicationInfo appInfo, String prefix) {
+        var sb = new StringBuilder();
+        for (var field : ApplicationInfo.class.getFields()) {
+            if (Modifier.isStatic(field.getModifiers())) {
+                continue;
+            }
+            try {
+                if (sb.length() > 0) {
+                    sb.append(", ");
+                }
+                sb.append(field.getName())
+                        .append("=")
+                        .append(field.get(appInfo));
+            } catch (IllegalAccessException ignored) {
+            }
+        }
+        log(Log.DEBUG, TAG, prefix + " " + sb);
+    }
+
     @Override
     public void onPackageReady(@NonNull PackageReadyParam param) {
         if (!param.isFirstPackage()) return;
@@ -114,6 +135,14 @@ public class PasskeyHook extends XposedModule {
             var info = pm.getPackageInfo(packageName, 0);
             versionCode = info.getLongVersionCode();
             versionName = info.versionName;
+        } catch (PackageManager.NameNotFoundException ignored) {
+        }
+        try {
+            var info = pm.getPackageInfo(BuildConfig.APPLICATION_ID, 0);
+            var moduleApplicationInfoFromPm = info.applicationInfo;
+            var moduleApplicationInfoFromLsp = getModuleApplicationInfo();
+            dumpApplicationInfo(moduleApplicationInfoFromPm, "pm ");
+            dumpApplicationInfo(moduleApplicationInfoFromLsp, "lsp");
         } catch (PackageManager.NameNotFoundException ignored) {
         }
         var appTag = packageName + ":" + versionName + "-" + versionCode;
