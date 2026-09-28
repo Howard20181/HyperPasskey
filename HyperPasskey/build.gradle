@@ -82,7 +82,7 @@ base {
     archivesName = project.name + "-" + android.defaultConfig.versionName + "." + android.defaultConfig.versionCode
 }
 dependencies {
-    implementation "androidx.annotation:annotation:1.10.0"
+    implementation "androidx.annotation:annotation:1.11.0"
     compileOnly 'io.github.libxposed:api:102.0.0'
     implementation 'org.luckypray:dexkit:2.2.0'
     compileOnly project(":hiddenapi:stubs")
